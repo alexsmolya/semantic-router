@@ -25,6 +25,8 @@ type signalConversationHistory struct {
 	systemMessageCount        int
 	toolMessageCount          int
 	toolDefinitionCount       int
+	toolChoiceRequired        bool
+	toolChoiceNone            bool
 	assistantToolCallCount    int
 	toolResultCount           int
 	imageContentCount         int
@@ -56,6 +58,8 @@ func signalConversationHistoryFromFastExtract(result *FastExtractResult) signalC
 		systemMessageCount:        result.SystemMessageCount,
 		toolMessageCount:          result.ToolMessageCount,
 		toolDefinitionCount:       result.ToolDefinitionCount,
+		toolChoiceRequired:        result.ToolChoiceRequired,
+		toolChoiceNone:            result.ToolChoiceNone,
 		assistantToolCallCount:    result.AssistantToolCallCount,
 		toolResultCount:           result.ToolResultCount,
 		imageContentCount:         result.ImageContentCount,

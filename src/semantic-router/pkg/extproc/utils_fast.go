@@ -44,6 +44,8 @@ type FastExtractResult struct {
 	SystemMessageCount        int
 	ToolMessageCount          int
 	ToolDefinitionCount       int
+	ToolChoiceRequired        bool
+	ToolChoiceNone            bool
 	AssistantToolCallCount    int
 	ToolResultCount           int
 	AssistantToolNames        []string
@@ -73,6 +75,7 @@ func extractContentFast(body []byte) (*FastExtractResult, error) {
 	r.ContextHasNonText = contextEstimate.HasNonText
 
 	countFastToolDefinitions(body, r)
+	populateFastOpenAIToolChoiceFacts(body, r)
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.Exists() || !messages.IsArray() {
 		return r, nil

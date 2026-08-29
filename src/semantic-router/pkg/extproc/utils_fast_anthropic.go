@@ -43,6 +43,7 @@ func extractContentFastAnthropic(body []byte) (*FastExtractResult, error) {
 	r.ContextTextBytes = contextEstimate.TextBytes
 	r.ContextEquivalentBytes = contextEstimate.EquivalentBytes
 	r.ContextHasNonText = contextEstimate.HasNonText
+	populateFastAnthropicToolChoiceFacts(body, r)
 
 	if system := gjson.GetBytes(body, "system"); system.Exists() {
 		consumeFastExtractAnthropicSystem(system, r)
