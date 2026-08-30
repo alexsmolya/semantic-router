@@ -65,9 +65,11 @@ def _inspect_labels(resource_kind: str, resource_name: str) -> tuple[str, object
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).lower()
         return (
-            "not found"
-            if any(marker in detail for marker in missing_markers)
-            else "unknown",
+            (
+                "not found"
+                if any(marker in detail for marker in missing_markers)
+                else "unknown"
+            ),
             None,
         )
     try:

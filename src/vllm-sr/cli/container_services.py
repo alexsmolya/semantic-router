@@ -6,10 +6,7 @@ import socket
 import subprocess
 
 from cli import container_log_io as log_io
-from cli.container_mounts import (
-    ContainerMountsUnavailableError,
-    inspect_container_mounts,
-)
+from cli import container_mounts
 from cli.container_observability import _ensure_hidden_config_dir, _run_service_start
 from cli.container_observability import (
     render_observability_template as _render_observability_template,
@@ -33,6 +30,7 @@ from cli.utils import get_logger
 
 log = get_logger(__name__)
 render_observability_template = _render_observability_template
+container_mount_destinations = container_mounts.container_mount_destinations
 
 
 def container_status(container_name):
@@ -794,20 +792,3 @@ def _replace_existing_container(
     container_stop_container(container_name)
     container_remove_container(container_name)
     return adopted
-
-
-def container_mount_destinations(container_name):
-    """Return the container-side paths *container_name* mounts.
-
-    ``None`` means the runtime could not answer, which callers must not read as
-    "mounts nothing": the difference decides whether a container is safe to
-    remove.
-    """
-    try:
-        mounts = inspect_container_mounts(container_name)
-    except ContainerMountsUnavailableError as exc:
-        log.warning(f"Cannot inspect the mounts of {container_name}: {exc}")
-        return None
-    return {
-        str(mount.get("Destination")) for mount in mounts if mount.get("Destination")
-    }

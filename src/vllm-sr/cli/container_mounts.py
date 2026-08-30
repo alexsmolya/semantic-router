@@ -74,3 +74,20 @@ def inspect_container_mounts(container_name: str) -> list[dict]:
     if not isinstance(mounts, list):
         return []
     return [mount for mount in mounts if isinstance(mount, dict)]
+
+
+def container_mount_destinations(container_name):
+    """Return the container-side paths *container_name* mounts.
+
+    ``None`` means the runtime could not answer, which callers must not read as
+    "mounts nothing": the difference decides whether a container is safe to
+    remove.
+    """
+    try:
+        mounts = inspect_container_mounts(container_name)
+    except ContainerMountsUnavailableError as exc:
+        log.warning(f"Cannot inspect the mounts of {container_name}: {exc}")
+        return None
+    return {
+        str(mount.get("Destination")) for mount in mounts if mount.get("Destination")
+    }
