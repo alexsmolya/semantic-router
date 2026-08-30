@@ -12,6 +12,7 @@ import os
 import subprocess
 
 from cli.container_services import (
+    container_ownership,
     container_remove_container,
     container_status,
     container_stop_container,
@@ -31,7 +32,7 @@ def run_container_specs(container_specs, *, storage_secret_values: dict[str, str
     the unwind stop and remove somebody else's container.
     """
 
-    started_containers: list[str] = []
+    started_containers: list[tuple[str, str | None]] = []
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
 
@@ -41,7 +42,9 @@ def run_container_specs(container_specs, *, storage_secret_values: dict[str, str
             commands,
             service_name,
             storage_secret_values,
-            on_created=lambda name=container_name: started_containers.append(name),
+            on_created=lambda name=container_name, command=commands[0]: (
+                started_containers.append((name, _stack_name_from_command(command)))
+            ),
         )
         if stdout:
             stdout_chunks.append(stdout)
@@ -112,10 +115,25 @@ def _service_child_env(
     return {**os.environ, **storage_secret_values}
 
 
-def _cleanup_started_containers(container_names: list[str]) -> None:
-    for container_name in reversed(container_names):
+def _stack_name_from_command(command: list[str]) -> str | None:
+    prefix = "com.vllm.semantic-router.stack="
+    for argument in command:
+        if argument.startswith(prefix):
+            return argument.removeprefix(prefix)
+    return None
+
+
+def _cleanup_started_containers(
+    container_names: list[tuple[str, str | None]],
+) -> None:
+    for container_name, stack_name in reversed(container_names):
         status = container_status(container_name)
         if status == "not found":
+            continue
+        if not stack_name or container_ownership(container_name, stack_name) != "owned":
+            log.error(
+                f"Refusing to roll back {container_name}: ownership is not established"
+            )
             continue
         if status == "running":
             container_stop_container(container_name)

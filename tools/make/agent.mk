@@ -352,6 +352,7 @@ agent-feature-gate: ## Run lint, targeted tests, local smoke, and a final report
 	@$(LOG_TARGET)
 	@set -e; \
 	$(MAKE) agent-ci-gate CHANGED_FILES="$(CHANGED_FILES)" AGENT_CHANGED_FILES_PATH="$(AGENT_CHANGED_FILES_PATH)" AGENT_BASE_REF="$(AGENT_BASE_REF)"; \
+	VLLM_SR_STACK_NAME="$(AGENT_STACK_NAME)" VLLM_SR_PORT_OFFSET="$(AGENT_PORT_OFFSET)" \
 	"$(AGENT_PYTHON)" tools/agent/scripts/agent_gate.py run-tests --mode feature-only --base-ref "$(AGENT_BASE_REF)" --changed-files "$(CHANGED_FILES)" --changed-files-path "$(AGENT_CHANGED_FILES_PATH)"; \
 	if [ "$$( "$(AGENT_PYTHON)" tools/agent/scripts/agent_gate.py needs-smoke --base-ref "$(AGENT_BASE_REF)" --changed-files "$(CHANGED_FILES)" --changed-files-path "$(AGENT_CHANGED_FILES_PATH)")" = "true" ]; then \
 		trap '$(MAKE) agent-stop-local ENV=$(ENV) AGENT_STACK_NAME="$(AGENT_STACK_NAME)" AGENT_PORT_OFFSET="$(AGENT_PORT_OFFSET)" >/dev/null 2>&1 || true' EXIT; \

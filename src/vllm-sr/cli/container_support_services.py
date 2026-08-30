@@ -19,6 +19,7 @@ from cli.container_observability import (
     _render_template_copy,
     _run_service_start,
 )
+from cli.container_run_command import insert_resource_labels_before_image
 from cli.container_runtime import get_container_runtime
 from cli.container_services import _replace_existing_container
 from cli.runtime_stack import RuntimeStackLayout, resolve_runtime_stack
@@ -35,7 +36,7 @@ def container_start_jaeger(
     stack_layout = stack_layout or resolve_runtime_stack()
     container_name = stack_layout.jaeger_container_name
     network_name = network_name or stack_layout.network_name
-    _replace_existing_container(container_name)
+    _replace_existing_container(container_name, stack_layout=stack_layout)
 
     cmd = [
         runtime,
@@ -53,6 +54,9 @@ def container_start_jaeger(
         f"{stack_layout.jaeger_ui_port}:16686",
         "docker.io/jaegertracing/all-in-one:latest",
     ]
+    insert_resource_labels_before_image(
+        cmd, "docker.io/jaegertracing/all-in-one:latest", stack_layout.ownership_labels
+    )
     return _run_service_start(cmd, "Jaeger")
 
 
@@ -66,7 +70,7 @@ def container_start_prometheus(
     stack_layout = stack_layout or resolve_runtime_stack()
     container_name = stack_layout.prometheus_container_name
     network_name = network_name or stack_layout.network_name
-    _replace_existing_container(container_name)
+    _replace_existing_container(container_name, stack_layout=stack_layout)
 
     config_dir = _ensure_hidden_config_dir(config_dir)
     prometheus_data_dir = os.path.join(config_dir, "prometheus-data")
@@ -112,6 +116,9 @@ def container_start_prometheus(
         "--storage.tsdb.path=/prometheus/data",
         "--storage.tsdb.retention.time=15d",
     ]
+    insert_resource_labels_before_image(
+        cmd, "docker.io/prom/prometheus:v2.53.0", stack_layout.ownership_labels
+    )
     return _run_service_start(cmd, "Prometheus")
 
 
@@ -125,7 +132,7 @@ def container_start_grafana(
     stack_layout = stack_layout or resolve_runtime_stack()
     container_name = stack_layout.grafana_container_name
     network_name = network_name or stack_layout.network_name
-    _replace_existing_container(container_name)
+    _replace_existing_container(container_name, stack_layout=stack_layout)
 
     grafana_dir = os.path.join(_ensure_hidden_config_dir(config_dir), "grafana")
     os.makedirs(grafana_dir, exist_ok=True)
@@ -189,7 +196,7 @@ def container_start_fleet_sim(
     container_name = stack_layout.fleet_sim_container_name
     network_name = network_name or stack_layout.network_name
     sim_image = get_fleet_sim_container_image(image=image, pull_policy=pull_policy)
-    _replace_existing_container(container_name)
+    _replace_existing_container(container_name, stack_layout=stack_layout)
 
     sim_state_dir = os.path.join(
         _ensure_hidden_config_dir(config_dir), "fleet-sim-state"
@@ -214,4 +221,5 @@ def container_start_fleet_sim(
         f"{stack_layout.fleet_sim_port}:8000",
         sim_image,
     ]
+    insert_resource_labels_before_image(cmd, sim_image, stack_layout.ownership_labels)
     return _run_service_start(cmd, "vllm-sr-sim")

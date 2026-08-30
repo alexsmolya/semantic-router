@@ -18,6 +18,17 @@ make vllm-sr-test-integration
 daemon. `vllm-sr-test-integration` builds the required local images and needs
 Docker or Podman access.
 
+For a shared host, give the run an isolated stack name and non-overlapping host
+port namespace. The same values must be used for the complete run so setup,
+assertions, logs, and teardown address one ownership scope:
+
+```bash
+make vllm-sr-test-integration VLLM_SR_STACK_NAME=cli-lane-a VLLM_SR_PORT_OFFSET=200
+```
+
+The memory integration target accepts the same variables. Do not point an
+isolated run at a name or port range already used by another stack.
+
 ## What the suite covers
 
 | File | Scope |

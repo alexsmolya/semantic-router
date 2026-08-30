@@ -33,6 +33,7 @@ from cli.container_run_command import (
     append_host_gateway,
     append_mount_specs,
     append_port_mappings,
+    append_resource_labels,
     append_supplemental_gids,
     build_base_run_command,
     maybe_append_amd_gpu_passthrough,
@@ -382,6 +383,7 @@ def _build_router_runtime_command(
         # start that follow, in that order.
         start_immediately=False,
         inherited_env_keys=inherited_sensitive_env,
+        ownership_labels=stack_layout.ownership_labels,
     )
 
 
@@ -430,6 +432,7 @@ def _build_envoy_runtime_command(
         command_args=service_args,
         start_immediately=not setup_mode,
         supplemental_gids=[int(runtime_paths["log_spool_gid"])],
+        ownership_labels=stack_layout.ownership_labels,
     )
 
 
@@ -512,6 +515,7 @@ def _build_dashboard_runtime_command(
         entrypoint=service_entrypoint,
         command_args=service_args,
         inherited_env_keys={"DASHBOARD_ADMIN_PASSWORD"} | inherited_sensitive_env,
+        ownership_labels=stack_layout.ownership_labels,
     )
 
 
@@ -664,6 +668,7 @@ def _build_service_run_command(
     start_immediately: bool = True,
     inherited_env_keys: set[str] | None = None,
     supplemental_gids: list[int] | None = None,
+    ownership_labels: tuple[tuple[str, str], ...] = (),
 ):
     cmd = build_base_run_command(
         runtime,
@@ -672,6 +677,7 @@ def _build_service_run_command(
         container_name,
         start_immediately=start_immediately,
     )
+    append_resource_labels(cmd, ownership_labels)
     maybe_append_amd_gpu_passthrough(cmd, enable_amd_gpu)
     maybe_append_nvidia_gpu_passthrough(cmd, enable_nvidia_gpu, runtime)
     append_supplemental_gids(cmd, supplemental_gids or [], runtime)

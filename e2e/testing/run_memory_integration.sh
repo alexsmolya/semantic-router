@@ -9,19 +9,35 @@ CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io/vllm-project/semantic-router}"
 DOCKER_TAG="${DOCKER_TAG:-latest}"
 VLLM_SR_IMAGE="${VLLM_SR_IMAGE:-ghcr.io/vllm-project/semantic-router/vllm-sr:latest}"
-VLLM_SR_STACK_NAME="${VLLM_SR_STACK_NAME:-vllm-sr}"
+VLLM_SR_STACK_NAME="${VLLM_SR_STACK_NAME:-vllm-sr-memory-$$}"
+VLLM_SR_PORT_OFFSET="${VLLM_SR_PORT_OFFSET:-0}"
+export VLLM_SR_STACK_NAME VLLM_SR_PORT_OFFSET
 if [[ "${VLLM_SR_STACK_NAME}" == "vllm-sr" ]]; then
     VLLM_SR_NETWORK="${VLLM_SR_NETWORK:-vllm-sr-network}"
+    VLLM_SR_ROUTER_CONTAINER_NAME="vllm-sr-router-container"
+    VLLM_SR_ENVOY_CONTAINER_NAME="vllm-sr-envoy-container"
+    VLLM_SR_DASHBOARD_CONTAINER_NAME="vllm-sr-dashboard-container"
 else
     VLLM_SR_NETWORK="${VLLM_SR_NETWORK:-${VLLM_SR_STACK_NAME}-vllm-sr-network}"
+    VLLM_SR_ROUTER_CONTAINER_NAME="${VLLM_SR_STACK_NAME}-vllm-sr-router-container"
+    VLLM_SR_ENVOY_CONTAINER_NAME="${VLLM_SR_STACK_NAME}-vllm-sr-envoy-container"
+    VLLM_SR_DASHBOARD_CONTAINER_NAME="${VLLM_SR_STACK_NAME}-vllm-sr-dashboard-container"
 fi
+STACK_SUFFIX="${VLLM_SR_STACK_NAME}-memory"
+LLM_KATAN_CONTAINER_NAME="${LLM_KATAN_CONTAINER_NAME:-${STACK_SUFFIX}-llm-katan}"
+MILVUS_CONTAINER_NAME="${MILVUS_CONTAINER_NAME:-${STACK_SUFFIX}-milvus}"
+LLM_KATAN_PORT=$((8000 + VLLM_SR_PORT_OFFSET))
+MILVUS_PORT=$((19530 + VLLM_SR_PORT_OFFSET))
+MILVUS_HEALTH_PORT=$((9091 + VLLM_SR_PORT_OFFSET))
+ROUTER_ENDPOINT_PORT=$((8888 + VLLM_SR_PORT_OFFSET))
+ROUTER_API_PORT=$((8080 + VLLM_SR_PORT_OFFSET))
 
 TEST_DIR="${MEMORY_TEST_DIR:-$(mktemp -d -t vsr-memory-test-XXXXXX)}"
 PID_FILE="${TEST_DIR}/serve.pid"
 SERVE_LOG="${TEST_DIR}/serve.log"
 CONFIG_FILE="${TEST_DIR}/config.yaml"
 KEEP_TEST_DIR="${KEEP_MEMORY_TEST_DIR:-0}"
-ROUTER_API_HEALTH_URL="${ROUTER_API_HEALTH_URL:-http://localhost:8080/ready}"
+ROUTER_API_HEALTH_URL="${ROUTER_API_HEALTH_URL:-http://localhost:$((8080 + VLLM_SR_PORT_OFFSET))/ready}"
 MODEL_DIR="${MEMORY_TEST_MODEL_DIR:-${TEST_DIR}/models}"
 if [[ "${MODEL_DIR}" != /* ]]; then
     MODEL_DIR="${REPO_ROOT}/${MODEL_DIR}"
@@ -73,14 +89,19 @@ cleanup() {
     # Dump container logs BEFORE stopping/removing them so CI can collect them.
     local log_dump_dir="${REPO_ROOT}/logs"
     mkdir -p "${log_dump_dir}" 2>/dev/null || true
-    for c in vllm-sr-router-container vllm-sr-envoy-container vllm-sr-dashboard-container vllm-sr-container llm-katan milvus-semantic-cache; do
+    for c in "${VLLM_SR_ROUTER_CONTAINER_NAME}" "${VLLM_SR_ENVOY_CONTAINER_NAME}" "${VLLM_SR_DASHBOARD_CONTAINER_NAME}" "${LLM_KATAN_CONTAINER_NAME}" "${MILVUS_CONTAINER_NAME}"; do
         "${CONTAINER_RUNTIME}" logs "$c" > "${log_dump_dir}/${c}.predump.log" 2>&1 || true
     done
 
     vllm-sr stop >/dev/null 2>&1 || true
-    "${CONTAINER_RUNTIME}" stop llm-katan >/dev/null 2>&1 || true
-    "${CONTAINER_RUNTIME}" rm llm-katan >/dev/null 2>&1 || true
-    make -C "${REPO_ROOT}" stop-milvus >/dev/null 2>&1 || true
+    labels="$(${CONTAINER_RUNTIME} inspect --format '{{json .Config.Labels}}' "${LLM_KATAN_CONTAINER_NAME}" 2>/dev/null || true)"
+    if [[ "${labels}" == *'"com.vllm.semantic-router.managed":"true"'* && "${labels}" == *"\"com.vllm.semantic-router.stack\":\"${VLLM_SR_STACK_NAME}\""* ]]; then
+        "${CONTAINER_RUNTIME}" stop "${LLM_KATAN_CONTAINER_NAME}" >/dev/null 2>&1 || true
+        "${CONTAINER_RUNTIME}" rm "${LLM_KATAN_CONTAINER_NAME}" >/dev/null 2>&1 || true
+    else
+        echo "Refusing to remove ${LLM_KATAN_CONTAINER_NAME}: ownership labels do not match" >&2
+    fi
+    make -C "${REPO_ROOT}" stop-milvus MILVUS_CONTAINER_NAME="${MILVUS_CONTAINER_NAME}" MILVUS_DATA_DIR="${TEST_DIR}/milvus-data" MILVUS_STACK_NAME="${VLLM_SR_STACK_NAME}" >/dev/null 2>&1 || true
 
     if [[ "${KEEP_TEST_DIR}" == "1" ]]; then
         echo "Preserving memory integration artifacts at ${TEST_DIR}"
@@ -203,7 +224,12 @@ else
         fi
     fi
 fi
-make -C "${REPO_ROOT}" start-milvus
+make -C "${REPO_ROOT}" start-milvus \
+    MILVUS_CONTAINER_NAME="${MILVUS_CONTAINER_NAME}" \
+    MILVUS_PORT="${MILVUS_PORT}" \
+    MILVUS_HEALTH_PORT="${MILVUS_HEALTH_PORT}" \
+    MILVUS_DATA_DIR="${TEST_DIR}/milvus-data" \
+    MILVUS_STACK_NAME="${VLLM_SR_STACK_NAME}"
 
 # Double-check Milvus readiness with pymilvus probe (gRPC-level, not just HTTP)
 echo "Verifying Milvus gRPC readiness via pymilvus..."
@@ -211,7 +237,7 @@ for attempt in $(seq 1 30); do
     if python3 -c "
 from pymilvus import connections
 try:
-    connections.connect('default', host='localhost', port='19530', timeout=5)
+    connections.connect('default', host='localhost', port=${MILVUS_PORT}, timeout=5)
     connections.disconnect('default')
     print('Milvus gRPC connection verified')
 except Exception as e:
@@ -221,49 +247,60 @@ except Exception as e:
     fi
     if [ "${attempt}" -eq 30 ]; then
         echo "ERROR: Milvus gRPC not ready after 30 attempts"
-        "${CONTAINER_RUNTIME}" logs milvus-semantic-cache 2>&1 | tail -30 || true
+        "${CONTAINER_RUNTIME}" logs "${MILVUS_CONTAINER_NAME}" 2>&1 | tail -30 || true
         exit 1
     fi
     sleep 2
 done
 
 cp "${REPO_ROOT}/e2e/config/config.memory-user.yaml" "${CONFIG_FILE}"
-python3 -c 'from pathlib import Path; path = Path("'"${CONFIG_FILE}"'"); t = path.read_text(); t = t.replace("host.docker.internal:8000", "llm-katan:8000"); t = t.replace("host.docker.internal:19530", "vllm-sr-milvus:19530"); path.write_text(t)'
+python3 -c 'from pathlib import Path; path = Path("'"${CONFIG_FILE}"'"); t = path.read_text(); t = t.replace("host.docker.internal:8000", "'"${LLM_KATAN_CONTAINER_NAME}"':8000"); t = t.replace("host.docker.internal:19530", "'"${MILVUS_CONTAINER_NAME}"':19530"); path.write_text(t)'
 
 if ! "${CONTAINER_RUNTIME}" network inspect "${VLLM_SR_NETWORK}" >/dev/null 2>&1; then
-    "${CONTAINER_RUNTIME}" network create "${VLLM_SR_NETWORK}" >/dev/null
+    "${CONTAINER_RUNTIME}" network create \
+        --label com.vllm.semantic-router.managed=true \
+        --label com.vllm.semantic-router.stack="${VLLM_SR_STACK_NAME}" \
+        "${VLLM_SR_NETWORK}" >/dev/null
+else
+    network_labels="$(${CONTAINER_RUNTIME} network inspect --format '{{json .Labels}}' "${VLLM_SR_NETWORK}" 2>/dev/null || true)"
+    if [[ "${network_labels}" != *'"com.vllm.semantic-router.managed":"true"'* || "${network_labels}" != *"\"com.vllm.semantic-router.stack\":\"${VLLM_SR_STACK_NAME}\""* ]]; then
+        echo "Refusing to use ${VLLM_SR_NETWORK}: ownership labels do not match" >&2
+        exit 1
+    fi
 fi
 
 # Connect the externally-started Milvus to the vllm-sr network so the router
 # container can reach it by the name vllm-sr serve expects.
-"${CONTAINER_RUNTIME}" network connect --alias vllm-sr-milvus "${VLLM_SR_NETWORK}" milvus-semantic-cache 2>/dev/null || true
-echo "Milvus connected to ${VLLM_SR_NETWORK} as vllm-sr-milvus"
+"${CONTAINER_RUNTIME}" network connect --alias "${MILVUS_CONTAINER_NAME}" "${VLLM_SR_NETWORK}" "${MILVUS_CONTAINER_NAME}" 2>/dev/null || true
+echo "Milvus connected to ${VLLM_SR_NETWORK} as ${MILVUS_CONTAINER_NAME}"
 
-"${CONTAINER_RUNTIME}" run -d --name llm-katan \
+"${CONTAINER_RUNTIME}" run -d --name "${LLM_KATAN_CONTAINER_NAME}" \
+    --label com.vllm.semantic-router.managed=true \
+    --label com.vllm.semantic-router.stack="${VLLM_SR_STACK_NAME}" \
     --network "${VLLM_SR_NETWORK}" \
-    --network-alias llm-katan \
-    -p 8000:8000 \
+    --network-alias "${LLM_KATAN_CONTAINER_NAME}" \
+    -p "127.0.0.1:${LLM_KATAN_PORT}:8000" \
     "${DOCKER_REGISTRY}/llm-katan:${DOCKER_TAG}" \
     llm-katan --model dummy --host 0.0.0.0 --port 8000 --served-model-name qwen3 --backend echo >/dev/null
 
 for _ in $(seq 1 30); do
-    if curl -s http://localhost:8000/health >/dev/null 2>&1; then
+    if curl -s "http://localhost:${LLM_KATAN_PORT}/health" >/dev/null 2>&1; then
         echo "llm-katan ready"
         break
     fi
 
-    if ! "${CONTAINER_RUNTIME}" ps --filter "name=llm-katan" --format '{{.Names}}' | grep -q '^llm-katan$'; then
+    if ! "${CONTAINER_RUNTIME}" ps --filter "name=${LLM_KATAN_CONTAINER_NAME}" --format '{{.Names}}' | grep -q "^${LLM_KATAN_CONTAINER_NAME}$"; then
         echo "llm-katan container exited unexpectedly"
-        "${CONTAINER_RUNTIME}" logs llm-katan || true
+        "${CONTAINER_RUNTIME}" logs "${LLM_KATAN_CONTAINER_NAME}" || true
         exit 1
     fi
 
     sleep 1
 done
 
-if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then
+if ! curl -s "http://localhost:${LLM_KATAN_PORT}/health" >/dev/null 2>&1; then
     echo "llm-katan did not become healthy"
-    "${CONTAINER_RUNTIME}" logs llm-katan || true
+    "${CONTAINER_RUNTIME}" logs "${LLM_KATAN_CONTAINER_NAME}" || true
     exit 1
 fi
 
@@ -306,8 +343,8 @@ fi
 
 cd "${REPO_ROOT}/e2e/testing"
 PYTHONUNBUFFERED=1 \
-ROUTER_ENDPOINT=http://localhost:8888 \
+ROUTER_ENDPOINT="http://localhost:${ROUTER_ENDPOINT_PORT}" \
 ROUTER_HEALTH_ENDPOINT="${ROUTER_API_HEALTH_URL}" \
-MILVUS_ADDRESS=localhost:19530 \
+MILVUS_ADDRESS="localhost:${MILVUS_PORT}" \
 MILVUS_COLLECTION=memory_test_ci \
 python3 09-memory-features-test.py

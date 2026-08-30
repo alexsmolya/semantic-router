@@ -28,6 +28,14 @@ DEFAULT_GRAFANA_PORT = 3000
 DEFAULT_REDIS_PORT = 6379
 DEFAULT_POSTGRES_PORT = 5432
 
+# These labels are the ownership attestation for resources created by the
+# local Docker target. Names are useful for addressing a service, but are not
+# sufficient proof of ownership: a stale or user-created resource can reuse a
+# name. Teardown must require both labels before it mutates a resource.
+MANAGED_RESOURCE_LABEL = "com.vllm.semantic-router.managed"
+STACK_RESOURCE_LABEL = "com.vllm.semantic-router.stack"
+MANAGED_RESOURCE_LABEL_VALUE = "true"
+
 STACK_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
@@ -154,6 +162,14 @@ class RuntimeStackLayout:
             self.redis_container_name,
             self.postgres_container_name,
             self.milvus_container_name,
+        )
+
+    @property
+    def ownership_labels(self) -> tuple[tuple[str, str], ...]:
+        """Labels that attest a resource belongs to this runtime stack."""
+        return (
+            (MANAGED_RESOURCE_LABEL, MANAGED_RESOURCE_LABEL_VALUE),
+            (STACK_RESOURCE_LABEL, self.stack_name),
         )
 
     @property

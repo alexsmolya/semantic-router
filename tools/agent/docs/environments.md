@@ -27,6 +27,9 @@ the shared-environment symlink without overwriting local files.
   `make agent-serve-local ENV=cpu AGENT_STACK_NAME=lane-a AGENT_PORT_OFFSET=0`
   and `make agent-serve-local ENV=cpu AGENT_STACK_NAME=lane-b AGENT_PORT_OFFSET=200`
 - Use the same `AGENT_STACK_NAME` and `AGENT_PORT_OFFSET` values with `make agent-smoke-local` and `make agent-stop-local`
+- The same values are inherited by feature-selected `vllm-sr-test-integration`
+  and `memory-test-integration` runs. For example:
+  `make agent-feature-gate ENV=cpu AGENT_STACK_NAME=lane-a AGENT_PORT_OFFSET=200`.
 
 ## `amd-local`
 

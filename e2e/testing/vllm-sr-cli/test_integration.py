@@ -82,6 +82,10 @@ class TestServeIntegration(ServeSessionMixin, CLITestBase):
                 "-d",
                 "--name",
                 container_name,
+                "--label",
+                "com.vllm.semantic-router.managed=true",
+                "--label",
+                f"com.vllm.semantic-router.stack={self.runtime_stack.stack_name}",
                 "--network",
                 self.runtime_stack.network_name,
                 "-v",
@@ -109,10 +113,7 @@ class TestServeIntegration(ServeSessionMixin, CLITestBase):
         try:
             yield
         finally:
-            self._run_subprocess(
-                [self.container_runtime, "rm", "-f", container_name],
-                timeout=30,
-            )
+            self._remove_owned_container(container_name)
 
     def _container_log_diagnostics(self, container_names: tuple[str, ...]) -> str:
         """Collect bounded logs for a failed mock request."""

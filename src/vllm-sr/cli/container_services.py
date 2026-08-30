@@ -14,6 +14,8 @@ from cli.container_observability import _ensure_hidden_config_dir, _run_service_
 from cli.container_observability import (
     render_observability_template as _render_observability_template,
 )
+from cli.container_ownership import container_ownership
+from cli.container_run_command import insert_resource_labels_before_image
 from cli.container_runtime import get_container_runtime
 from cli.recipe_topology_storage import validate_storage_port_isolation
 from cli.runtime_stack import RuntimeStackLayout, resolve_runtime_stack
@@ -186,38 +188,6 @@ def container_exec(container_name, command):
         return (exc.returncode, exc.stdout, exc.stderr)
 
 
-def container_create_network(network_name):
-    """Create a Docker network if it doesn't exist."""
-    runtime = get_container_runtime()
-    cmd = [
-        runtime,
-        "network",
-        "ls",
-        "--filter",
-        f"name={network_name}",
-        "--format",
-        "{{.Name}}",
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        existing_networks = {
-            line.strip() for line in result.stdout.splitlines() if line.strip()
-        }
-        if network_name in existing_networks:
-            log.debug(f"Network {network_name} already exists")
-            return (0, "", "")
-    except subprocess.CalledProcessError:
-        pass
-
-    cmd = [runtime, "network", "create", network_name]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        log.info(f"Created network: {network_name}")
-        return (0, result.stdout, result.stderr)
-    except subprocess.CalledProcessError as exc:
-        return (exc.returncode, exc.stdout, exc.stderr)
-
-
 def container_remove_network(network_name):
     """Remove a Docker network."""
     runtime = get_container_runtime()
@@ -265,13 +235,19 @@ def container_start_redis(
     adopted_volume = None
     if reuse_existing and not recreate:
         reuse_result = _reuse_running_storage_container(
-            container_name, "Redis", network_name, stack_layout.network_name
+            container_name,
+            "Redis",
+            network_name,
+            stack_layout.network_name,
+            stack_layout.stack_name,
         )
         if reuse_result is not None:
             return reuse_result
     if reuse_existing or recreate:
         adopted_volume = _replace_existing_container(
-            container_name, adopt_volume_destination=REDIS_DATA_MOUNT_PATH
+            container_name,
+            adopt_volume_destination=REDIS_DATA_MOUNT_PATH,
+            stack_layout=stack_layout,
         )
 
     if _is_port_in_use(stack_layout.redis_port):
@@ -306,6 +282,9 @@ def container_start_redis(
     # already recorded a named volume for every managed stack.
     cmd.append("docker.io/library/redis:7-alpine")
     cmd += ["redis-server", CONTAINER_REDIS_CONF_PATH]
+    insert_resource_labels_before_image(
+        cmd, "docker.io/library/redis:7-alpine", stack_layout.ownership_labels
+    )
     return _run_service_start(cmd, "Redis")
 
 
@@ -339,13 +318,19 @@ def container_start_postgres(
     adopted_volume = None
     if reuse_existing and not recreate:
         reuse_result = _reuse_running_storage_container(
-            container_name, "Postgres", network_name, stack_layout.network_name
+            container_name,
+            "Postgres",
+            network_name,
+            stack_layout.network_name,
+            stack_layout.stack_name,
         )
         if reuse_result is not None:
             return reuse_result
     if reuse_existing or recreate:
         adopted_volume = _replace_existing_container(
-            container_name, adopt_volume_destination=POSTGRES_DATA_MOUNT_PATH
+            container_name,
+            adopt_volume_destination=POSTGRES_DATA_MOUNT_PATH,
+            stack_layout=stack_layout,
         )
 
     if _is_port_in_use(stack_layout.postgres_port):
@@ -387,6 +372,9 @@ def container_start_postgres(
     # anonymous volume that declaration creates. A major bump also changes the
     # on-disk data directory format, which a recreated container cannot read.
     cmd.append("docker.io/library/postgres:16-alpine")
+    insert_resource_labels_before_image(
+        cmd, "docker.io/library/postgres:16-alpine", stack_layout.ownership_labels
+    )
     return _run_service_start(cmd, "Postgres")
 
 
@@ -412,7 +400,11 @@ def container_start_milvus(
 
     if reuse_existing:
         reuse_result = _reuse_running_storage_container(
-            container_name, "Milvus", network_name, stack_layout.network_name
+            container_name,
+            "Milvus",
+            network_name,
+            stack_layout.network_name,
+            stack_layout.stack_name,
         )
         if reuse_result is not None:
             return reuse_result
@@ -421,7 +413,7 @@ def container_start_milvus(
         )
         if reuse_result is not None:
             return reuse_result
-        _replace_existing_container(container_name)
+        _replace_existing_container(container_name, stack_layout=stack_layout)
 
     if _is_port_in_use(stack_layout.milvus_port):
         return _storage_port_conflict_result(
@@ -468,6 +460,9 @@ def container_start_milvus(
         "run",
         "standalone",
     ]
+    insert_resource_labels_before_image(
+        cmd, "docker.io/milvusdb/milvus:v2.3.3", stack_layout.ownership_labels
+    )
     return _run_service_start(cmd, "Milvus")
 
 
@@ -572,6 +567,7 @@ def _reuse_running_storage_container(
     label: str,
     data_network_name: str | None,
     app_network_name: str | None,
+    stack_name: str,
 ) -> tuple[int, str, str] | None:
     """Return a success/failure tuple when a running storage container is reused.
 
@@ -585,6 +581,14 @@ def _reuse_running_storage_container(
     """
     status = container_status(container_name)
     if status == "running":
+        ownership = container_ownership(container_name, stack_name)
+        if ownership != "owned":
+            return (
+                1,
+                "",
+                f"refusing to reuse {label} container {container_name}: "
+                f"ownership is {ownership}",
+            )
         safe, detail = _storage_ports_are_loopback_only(container_name)
         if not safe:
             return (
@@ -735,7 +739,9 @@ def _is_port_in_use(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _replace_existing_container(container_name, *, adopt_volume_destination=None):
+def _replace_existing_container(
+    container_name, *, adopt_volume_destination=None, stack_layout=None
+):
     """Remove an existing container, first recording the volume it mounts.
 
     ``docker rm`` keeps the volume alive but destroys the only record of which
@@ -755,6 +761,12 @@ def _replace_existing_container(container_name, *, adopt_volume_destination=None
     status = container_status(container_name)
     if status == "not found":
         return None
+    stack_layout = stack_layout or resolve_runtime_stack()
+    ownership = container_ownership(container_name, stack_layout.stack_name)
+    if ownership != "owned":
+        raise RuntimeError(
+            f"refusing to replace {container_name}: ownership is {ownership}"
+        )
     log.info(f"{container_name} already exists (status: {status}), cleaning up...")
     adopted = None
     if adopt_volume_destination:

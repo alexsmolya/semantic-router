@@ -111,6 +111,42 @@ def test_resolve_runtime_stack_supports_custom_stack_name_and_port_offset():
     )
 
 
+def test_runtime_container_commands_attest_their_stack_identity(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "version: v0.1\nlisteners:\n  - name: http-8899\n"
+        "    address: 0.0.0.0\n    port: 8899\n"
+    )
+    monkeypatch.setattr(container_start, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(
+        container_start,
+        "get_runtime_images",
+        lambda **_kwargs: {
+            "router": "test-image",
+            "envoy": "test-image",
+            "dashboard": "test-image",
+        },
+    )
+    captured = _capture_run_commands(monkeypatch)
+    _stub_valid_container_cli(monkeypatch, tmp_path)
+    stack_layout = resolve_runtime_stack(stack_name="lane-a", port_offset=200)
+
+    container_start.container_start_vllm_sr(
+        str(config_path),
+        {},
+        [{"name": "http-8899", "address": "0.0.0.0", "port": 8899}],
+        stack_layout=stack_layout,
+        network_name=stack_layout.network_name,
+    )
+
+    for command in captured:
+        if "--name" not in command:
+            continue
+        assert "--label" in command
+        assert "com.vllm.semantic-router.managed=true" in command
+        assert f"com.vllm.semantic-router.stack={stack_layout.stack_name}" in command
+
+
 def test_start_vllm_sr_uses_state_root_override(monkeypatch, tmp_path):
     calls = []
     state_root = tmp_path / "workspace-root"

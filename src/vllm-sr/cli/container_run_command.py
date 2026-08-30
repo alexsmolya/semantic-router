@@ -32,6 +32,21 @@ def build_base_run_command(
     return cmd
 
 
+def append_resource_labels(cmd, labels: tuple[tuple[str, str], ...]) -> None:
+    """Add ownership labels to a runtime resource command."""
+    for key, value in labels:
+        cmd.extend(["--label", f"{key}={value}"])
+
+
+def insert_resource_labels_before_image(
+    cmd, image: str, labels: tuple[tuple[str, str], ...]
+) -> None:
+    """Insert ownership labels before the image and its command arguments."""
+    options: list[str] = []
+    append_resource_labels(options, labels)
+    cmd[cmd.index(image) : cmd.index(image)] = options
+
+
 def append_amd_gpu_passthrough(cmd, normalized_platform):
     if normalized_platform != PLATFORM_AMD:
         return

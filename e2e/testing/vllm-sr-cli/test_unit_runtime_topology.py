@@ -37,7 +37,16 @@ class TestCLITestBaseRuntimeTopology(unittest.TestCase):
                     if status is None:
                         return _completed_process(returncode=1)
                     return _completed_process(stdout=status)
+                if command[2:4] == ["--format", "{{json .Config.Labels}}"]:
+                    return _completed_process(
+                        stdout=(
+                            '{"com.vllm.semantic-router.managed":"true",'
+                            '"com.vllm.semantic-router.stack":"vllm-sr"}'
+                        )
+                    )
                 return _completed_process(stdout=command[-1])
+            if command[1] in {"stop", "rm"}:
+                return _completed_process()
             raise AssertionError(f"unexpected command: {command}")
 
         return side_effect
@@ -99,7 +108,7 @@ class TestCLITestBaseRuntimeTopology(unittest.TestCase):
         self, run_subprocess
     ):
         CLITestBase.container_runtime = "docker"
-        run_subprocess.return_value = _completed_process()
+        run_subprocess.side_effect = self._mock_statuses({})
 
         CLITestBase._cleanup_container()
 
@@ -109,7 +118,6 @@ class TestCLITestBaseRuntimeTopology(unittest.TestCase):
             if call.args[0][1] == "rm"
         ]
         for container_name in (
-            CLITestBase.CONTAINER_NAME,
             CLITestBase.ROUTER_CONTAINER_NAME,
             CLITestBase.ENVOY_CONTAINER_NAME,
             CLITestBase.DASHBOARD_CONTAINER_NAME,

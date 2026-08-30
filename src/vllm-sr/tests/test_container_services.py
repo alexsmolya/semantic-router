@@ -1,5 +1,7 @@
 import subprocess
 
+import cli.container_networks as networks
+import cli.container_ownership as ownership
 import pytest
 from cli import container_mounts, container_services
 from cli.runtime_stack import resolve_runtime_stack
@@ -77,9 +79,12 @@ def test_container_create_network_does_not_match_namespaced_suffix(monkeypatch):
         return subprocess.CompletedProcess(command, 0, stdout="network-id\n", stderr="")
 
     monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(ownership, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(networks, "get_container_runtime", lambda: "docker")
     monkeypatch.setattr(container_services.subprocess, "run", fake_run)
+    monkeypatch.setattr(networks.subprocess, "run", fake_run)
 
-    assert container_services.container_create_network("vllm-sr-network")[0] == 0
+    assert networks.container_create_network("vllm-sr-network")[0] == 0
     assert calls[-1] == ["docker", "network", "create", "vllm-sr-network"]
 
 
@@ -96,10 +101,76 @@ def test_container_create_network_accepts_exact_existing_name(monkeypatch):
         )
 
     monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(networks, "get_container_runtime", lambda: "docker")
     monkeypatch.setattr(container_services.subprocess, "run", fake_run)
+    monkeypatch.setattr(networks.subprocess, "run", fake_run)
 
-    assert container_services.container_create_network("vllm-sr-network")[0] == 0
+    assert networks.container_create_network("vllm-sr-network")[0] == 0
     assert len(calls) == 1
+
+
+def test_container_create_network_refuses_an_existing_network_from_another_stack(
+    monkeypatch,
+):
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[1:3] == ["network", "ls"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="lane-b-vllm-sr-network\n", stderr=""
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"com.vllm.semantic-router.managed":"true",'
+            '"com.vllm.semantic-router.stack":"lane-b"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(ownership, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(networks, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(container_services.subprocess, "run", fake_run)
+    monkeypatch.setattr(networks.subprocess, "run", fake_run)
+    monkeypatch.setattr(ownership.subprocess, "run", fake_run)
+
+    result = networks.container_create_network(
+        "lane-b-vllm-sr-network",
+        labels=(
+            ("com.vllm.semantic-router.managed", "true"),
+            ("com.vllm.semantic-router.stack", "lane-a"),
+        ),
+    )
+
+    assert result[0] != 0
+    assert "ownership is unowned" in result[2]
+    assert not any(command[1:3] == ["network", "create"] for command in calls)
+
+
+def test_container_ownership_requires_both_labels(monkeypatch):
+    responses = iter(
+        [
+            '{"com.vllm.semantic-router.managed":"true",'
+            '"com.vllm.semantic-router.stack":"lane-a"}',
+            '{"com.vllm.semantic-router.managed":"true"}',
+            "{}",
+        ]
+    )
+
+    monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(ownership, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(
+        ownership.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=next(responses), stderr=""
+        ),
+    )
+
+    assert container_services.container_ownership("resource-a", "lane-a") == "owned"
+    assert container_services.container_ownership("resource-b", "lane-a") == "unowned"
+    assert container_services.container_ownership("resource-c", "lane-a") == "unowned"
 
 
 def _storage_start_environment(monkeypatch, commands, *, status="not found"):
@@ -181,6 +252,9 @@ def test_replacing_a_storage_container_reads_its_volume_before_removing_it(
     monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
     monkeypatch.setattr(container_services, "container_status", lambda _name: "exited")
     monkeypatch.setattr(
+        container_services, "container_ownership", lambda *_args: "owned"
+    )
+    monkeypatch.setattr(
         container_services,
         "adopted_volume_name",
         lambda name, destination: events.append(("inspect", destination)) or "old-vol",
@@ -214,6 +288,9 @@ def test_a_replaced_container_with_no_volume_mount_is_not_an_error(monkeypatch):
     monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
     monkeypatch.setattr(container_services, "container_status", lambda _name: "exited")
     monkeypatch.setattr(
+        container_services, "container_ownership", lambda *_args: "owned"
+    )
+    monkeypatch.setattr(
         container_services, "adopted_volume_name", lambda _name, _destination: None
     )
     monkeypatch.setattr(container_services, "container_stop_container", lambda _n: True)
@@ -230,6 +307,22 @@ def test_a_replaced_container_with_no_volume_mount_is_not_an_error(monkeypatch):
     )
 
 
+def test_replacing_an_unowned_container_fails_closed(monkeypatch):
+    removed = []
+    monkeypatch.setattr(container_services, "container_status", lambda _name: "exited")
+    monkeypatch.setattr(
+        container_services, "container_ownership", lambda *_args: "unowned"
+    )
+    monkeypatch.setattr(
+        container_services, "container_remove_container", removed.append
+    )
+
+    with pytest.raises(RuntimeError, match="refusing to replace"):
+        container_services._replace_existing_container("vllm-sr-redis")
+
+    assert removed == []
+
+
 def test_an_adopted_volume_is_mounted_when_the_caller_records_no_name(
     monkeypatch, tmp_path
 ):
@@ -237,6 +330,9 @@ def test_an_adopted_volume_is_mounted_when_the_caller_records_no_name(
     _storage_start_environment(monkeypatch, commands, status="exited")
     monkeypatch.setattr(
         container_services, "adopted_volume_name", lambda _name, _dest: "anon-hex-id"
+    )
+    monkeypatch.setattr(
+        container_services, "container_ownership", lambda *_args: "owned"
     )
     monkeypatch.setattr(container_services, "container_stop_container", lambda _n: True)
     monkeypatch.setattr(

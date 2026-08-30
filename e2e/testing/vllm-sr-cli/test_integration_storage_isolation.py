@@ -41,17 +41,15 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
     # takes longer than a serve that has no storage to bring up.
     STORAGE_STARTUP_TIMEOUT = 300
 
-    CONTROL_CONTAINER_NAME = "vllm-sr-cli-test-control-redis"
-
     def setUp(self):
         super().setUp()
         self.HEALTH_CHECK_TIMEOUT = self.STORAGE_STARTUP_TIMEOUT
+        self.CONTROL_CONTAINER_NAME = (
+            f"{self.runtime_stack.stack_name}-vllm-sr-cli-test-control-redis"
+        )
 
     def tearDown(self):
-        self._run_subprocess(
-            [self.container_runtime, "rm", "-f", self.CONTROL_CONTAINER_NAME],
-            timeout=30,
-        )
+        self._remove_owned_container(self.CONTROL_CONTAINER_NAME)
         # `stop` is what removes both stack networks; the class-level cleanup
         # only removes containers, and a leftover network makes the next run
         # reuse a boundary it never created.
@@ -157,8 +155,7 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
         self.assertEqual(
             connect.returncode,
             0,
-            f"could not move Redis back onto the application network: "
-            f"{connect.stderr}",
+            f"could not move Redis back onto the application network: {connect.stderr}",
         )
         try:
             output = self._probe_redis(self.NETWORK_NAME)
@@ -182,7 +179,7 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
             self.assertEqual(
                 disconnect.returncode,
                 0,
-                f"Redis was left on the application network: " f"{disconnect.stderr}",
+                f"Redis was left on the application network: {disconnect.stderr}",
             )
         print("  ✓ The probe reports a store moved back onto the application network")
 
@@ -204,6 +201,10 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
                 "-d",
                 "--name",
                 self.CONTROL_CONTAINER_NAME,
+                "--label",
+                "com.vllm.semantic-router.managed=true",
+                "--label",
+                f"com.vllm.semantic-router.stack={self.runtime_stack.stack_name}",
                 "--network",
                 self.NETWORK_NAME,
                 REDIS_PROBE_IMAGE,
@@ -225,10 +226,7 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
         try:
             yield
         finally:
-            self._run_subprocess(
-                [self.container_runtime, "rm", "-f", self.CONTROL_CONTAINER_NAME],
-                timeout=30,
-            )
+            self._remove_owned_container(self.CONTROL_CONTAINER_NAME)
 
     def _probe_redis(self, network_name: str, host: str | None = None) -> str:
         """Ask Redis for a PING from inside *network_name*."""

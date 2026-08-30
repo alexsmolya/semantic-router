@@ -16,6 +16,7 @@ implementation that races.
 import subprocess
 from types import SimpleNamespace
 
+import cli.container_ownership as ownership
 import pytest
 from cli import (
     container_services,
@@ -122,7 +123,7 @@ def test_serve_creates_both_stack_networks_before_provisioning_storage(
     monkeypatch.setattr(
         runtime_lifecycle,
         "container_create_network",
-        lambda name: created_networks.append(name) or (0, "", ""),
+        lambda name, **_kwargs: created_networks.append(name) or (0, "", ""),
     )
     monkeypatch.setattr(runtime_lifecycle, "container_status", lambda _name: "running")
     monkeypatch.setattr(core, "start_fleet_sim_sidecar", lambda *_a, **_k: False)
@@ -171,10 +172,9 @@ def test_the_storage_backends_are_started_on_the_data_network(monkeypatch, tmp_p
             attribute,
             # `backend=backend` binds the loop value into each stub rather than
             # letting all three close over the final one.
-            lambda network, _layout, *, backend=backend, **_kwargs: networks.update(
-                {backend: network}
-            )
-            or (0, "", ""),
+            lambda network, _layout, *, backend=backend, **_kwargs: (
+                networks.update({backend: network}) or (0, "", "")
+            ),
         )
 
     started = start_storage_backends(
@@ -285,10 +285,20 @@ def _reusable_running_storage(monkeypatch, commands):
     """Make every managed storage container look running and safely published."""
 
     monkeypatch.setattr(container_services, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(ownership, "get_container_runtime", lambda: "docker")
     monkeypatch.setattr(container_services, "container_status", lambda _name: "running")
 
     def fake_run(cmd, **_kwargs):
         commands.append(list(cmd))
+        if "{{json .Config.Labels}}" in cmd:
+            return SimpleNamespace(
+                stdout=(
+                    '{"com.vllm.semantic-router.managed":"true",'
+                    '"com.vllm.semantic-router.stack":"vllm-sr"}'
+                ),
+                stderr="",
+                returncode=0,
+            )
         if "inspect" in cmd:
             return SimpleNamespace(
                 stdout=(
@@ -303,6 +313,7 @@ def _reusable_running_storage(monkeypatch, commands):
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
     monkeypatch.setattr(container_services.subprocess, "run", fake_run)
+    monkeypatch.setattr(ownership.subprocess, "run", fake_run)
 
 
 def test_re_serving_an_older_stack_moves_its_storage_off_the_application_network(
@@ -412,6 +423,8 @@ def _stop_environment(monkeypatch, stack_layout, statuses, stopped, removed):
     )
     monkeypatch.setattr(core, "resolve_openclaw_data_dir", lambda _cwd: "/unused")
     monkeypatch.setattr(core, "load_openclaw_registry", lambda _path: [])
+    monkeypatch.setattr(core, "container_ownership", lambda *_args: "owned")
+    monkeypatch.setattr(core, "network_ownership", lambda *_args: "owned")
     monkeypatch.setattr(
         core, "container_stop_container", lambda name: stopped.append(name) or True
     )
@@ -449,6 +462,57 @@ def test_stop_removes_both_stack_networks(monkeypatch):
         stack_layout.network_name,
         stack_layout.data_network_name,
     ]
+
+
+def test_stopping_one_stack_does_not_mutate_another_stack(monkeypatch):
+    stack_a = resolve_runtime_stack(stack_name="lane-a")
+    stack_b = resolve_runtime_stack(stack_name="lane-b")
+    statuses = dict.fromkeys(_all_managed_names(stack_a), "not found")
+    statuses[stack_a.router_container_name] = "running"
+    stopped = []
+    removed = []
+    removed_networks = []
+
+    _stop_environment(monkeypatch, stack_a, statuses, stopped, removed)
+    monkeypatch.setattr(
+        core,
+        "container_ownership",
+        lambda name, stack_name: (
+            "owned"
+            if stack_name == stack_a.stack_name and name in _all_managed_names(stack_a)
+            else "unowned"
+        ),
+    )
+    monkeypatch.setattr(
+        core,
+        "container_remove_network",
+        lambda name: removed_networks.append(name) or (0, "", ""),
+    )
+    monkeypatch.setattr(
+        core,
+        "network_ownership",
+        lambda name, stack_name: (
+            "owned"
+            if stack_name == stack_a.stack_name
+            and name in {stack_a.network_name, stack_a.data_network_name}
+            else "unowned"
+        ),
+    )
+
+    core.stop_vllm_sr()
+
+    assert stopped == [stack_a.router_container_name]
+    assert removed == [stack_a.router_container_name]
+    assert removed_networks == [stack_a.network_name, stack_a.data_network_name]
+    assert all(
+        name not in stopped + removed + removed_networks
+        for name in (
+            *stack_b.runtime_container_names,
+            *stack_b.storage_container_names,
+            stack_b.network_name,
+            stack_b.data_network_name,
+        )
+    )
 
 
 def test_detaching_a_preserved_container_rejects_a_single_network_name():
@@ -490,6 +554,9 @@ def test_a_failed_creation_does_not_remove_a_container_of_the_same_name(monkeypa
     monkeypatch.setattr(
         container_start_runner, "container_remove_container", removed.append
     )
+    monkeypatch.setattr(
+        container_start_runner, "container_ownership", lambda *_args: "owned"
+    )
 
     return_code, _stdout, stderr = container_start_runner.run_container_specs(
         [("router", "vllm-sr-router-container", (["docker", "create"],))],
@@ -528,6 +595,9 @@ def test_a_failure_after_creation_unwinds_the_container_it_created(monkeypatch):
     monkeypatch.setattr(
         container_start_runner, "container_remove_container", removed.append
     )
+    monkeypatch.setattr(
+        container_start_runner, "container_ownership", lambda *_args: "owned"
+    )
 
     return_code, _stdout, _stderr = container_start_runner.run_container_specs(
         [
@@ -535,7 +605,13 @@ def test_a_failure_after_creation_unwinds_the_container_it_created(monkeypatch):
                 "router",
                 "vllm-sr-router-container",
                 (
-                    ["docker", "create", "vllm-sr-router-container"],
+                    [
+                        "docker",
+                        "create",
+                        "--label",
+                        "com.vllm.semantic-router.stack=vllm-sr",
+                        "vllm-sr-router-container",
+                    ],
                     ["docker", "network", "connect", "d", "vllm-sr-router-container"],
                     ["docker", "start", "vllm-sr-router-container"],
                 ),

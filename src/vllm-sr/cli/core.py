@@ -8,6 +8,7 @@ from cli.container_cli import (
     container_logs,
     container_logs_output,
     container_network_disconnect_if_attached,
+    container_ownership,
     container_remove_container,
     container_remove_network,
     container_start_vllm_sr,
@@ -15,6 +16,7 @@ from cli.container_cli import (
     container_status_strict,
     container_stop_container,
     load_openclaw_registry,
+    network_ownership,
 )
 from cli.container_images import get_fleet_sim_container_image, get_runtime_images
 from cli.logo import print_vllm_logo
@@ -88,10 +90,10 @@ def _prepare_runtime_network(
 ):
     shared_network_name = stack_layout.network_name
     state_root_dir = resolve_state_root_dir(source_config_file, env_vars)
-    ensure_shared_network(shared_network_name)
+    ensure_shared_network(shared_network_name, stack_layout)
     # The data network has to exist before any storage container is created on
     # it, which is the very next step in the serve sequence.
-    ensure_data_network(stack_layout.data_network_name)
+    ensure_data_network(stack_layout.data_network_name, stack_layout)
     ensure_runtime_images_for_pull_policy(
         image,
         router_image,
@@ -398,6 +400,7 @@ def stop_vllm_sr():
         if not _stop_managed_container(
             container_name,
             container_statuses[container_name],
+            stack_name=stack_layout.stack_name,
             stop_message=f"Stopping {container_name}...",
             stopped_message=f"{container_name} stopped",
         ):
@@ -405,6 +408,7 @@ def stop_vllm_sr():
     if not _stop_managed_container(
         stack_layout.fleet_sim_container_name,
         container_statuses[stack_layout.fleet_sim_container_name],
+        stack_name=stack_layout.stack_name,
         stop_message=f"Stopping {stack_layout.fleet_sim_container_name}...",
         stopped_message=f"{stack_layout.fleet_sim_container_name} stopped",
     ):
@@ -413,6 +417,7 @@ def stop_vllm_sr():
         if not _stop_managed_container(
             container_name,
             container_statuses[container_name],
+            stack_name=stack_layout.stack_name,
             stop_message=f"Stopping {container_name}...",
             stopped_message=f"{container_name} stopped",
         ):
@@ -427,6 +432,7 @@ def stop_vllm_sr():
         if not _stop_managed_container(
             container_name,
             container_statuses[container_name],
+            stack_name=stack_layout.stack_name,
             stop_message=f"Stopping {container_name}...",
             stopped_message=f"{container_name} stopped",
             preserve_unadopted_data=container_name in credentialed_storage,
@@ -434,7 +440,7 @@ def stop_vllm_sr():
         ):
             failures.append(container_name)
     for stack_network_name in stack_network_names:
-        if not _remove_runtime_network(stack_network_name):
+        if not _remove_runtime_network(stack_network_name, stack_layout.stack_name):
             failures.append(stack_network_name)
     if failures:
         raise RuntimeError("Failed to stop managed containers: " + ", ".join(failures))
@@ -530,9 +536,14 @@ def _stop_managed_container(
     stopped_message: str | None = None,
     preserve_unadopted_data: bool = False,
     network_names: tuple[str, ...] = (),
+    stack_name: str,
 ) -> bool:
     if container_status == "not found":
         return True
+    ownership = container_ownership(container_name, stack_name)
+    if ownership != "owned":
+        log.error(f"Refusing to mutate {container_name}: ownership is {ownership}")
+        return False
     if stop_message and container_status == "running":
         log.info(stop_message)
     if container_status == "running" and not container_stop_container(container_name):
@@ -572,7 +583,15 @@ def _storage_container_names(stack_layout: RuntimeStackLayout) -> tuple[str, ...
     return stack_layout.storage_container_names
 
 
-def _remove_runtime_network(network_name: str) -> bool:
+def _remove_runtime_network(network_name: str, stack_name: str) -> bool:
+    ownership = network_ownership(network_name, stack_name)
+    if ownership == "not found":
+        return True
+    if ownership != "owned":
+        log.error(
+            f"Refusing to remove network {network_name}: ownership is {ownership}"
+        )
+        return False
     return_code, _stdout, stderr = container_remove_network(network_name)
     if return_code == 0:
         log.info(f"Network {network_name} removed")
@@ -596,7 +615,7 @@ def show_logs(service: str, follow: bool = False):
         if service == "simulator"
         else runtime_service_container_name(service, stack_layout)
     )
-    _ensure_runtime_container_available(container_name)
+    _ensure_runtime_container_available(container_name, stack_layout.stack_name)
 
     if follow:
         log.info(f"Following {service} logs (Ctrl+C to stop)...")
@@ -685,9 +704,15 @@ def _requested_services(service: str) -> list[str]:
     return [service]
 
 
-def _ensure_runtime_container_available(container_name: str) -> None:
+def _ensure_runtime_container_available(container_name: str, stack_name: str) -> None:
     if container_status(container_name) != "not found":
-        return
+        ownership = container_ownership(container_name, stack_name)
+        if ownership == "owned":
+            return
+        log.error(
+            f"Refusing to read logs from {container_name}: ownership is {ownership}"
+        )
+        raise SystemExit(1)
     log.error("Container not found. Is vLLM Semantic Router running?")
     hint("Start it with: vllm-sr serve")
     raise SystemExit(1)

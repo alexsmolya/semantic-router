@@ -21,7 +21,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import yaml
-from cli.runtime_stack import DEFAULT_STACK_NAME, resolve_runtime_stack
+from cli.runtime_stack import resolve_runtime_stack
 
 HTTP_STATUS_OK = 200
 AGENT_SMOKE_CONFIG_PATH = (
@@ -59,8 +59,8 @@ def _api_only_global_config() -> dict[str, object]:
 class CLITestBase(unittest.TestCase):
     """Base class for vLLM-SR CLI tests."""
 
-    # Historical single-container runtime name still cleaned up for local test hygiene.
-    CONTAINER_NAME = "vllm-sr-container"
+    runtime_stack = resolve_runtime_stack()
+
     ROUTER_CONTAINER_NAME = "vllm-sr-router-container"
     ENVOY_CONTAINER_NAME = "vllm-sr-envoy-container"
     DASHBOARD_CONTAINER_NAME = "vllm-sr-dashboard-container"
@@ -79,7 +79,9 @@ class CLITestBase(unittest.TestCase):
     # One-shot container a test drives to probe a network from the inside.
     # Named rather than anonymous so a probe that outlives its test is still
     # removed by the class-level cleanup.
-    PROBE_CONTAINER_NAME = "vllm-sr-cli-test-probe"
+    PROBE_CONTAINER_NAME = (
+        f"{resolve_runtime_stack().stack_name}-vllm-sr-cli-test-probe"
+    )
 
     # Default timeout for CLI commands
     DEFAULT_TIMEOUT = 60
@@ -91,16 +93,13 @@ class CLITestBase(unittest.TestCase):
     def setUpClass(cls):
         """Set up test class - ensure clean state."""
         cls.runtime_stack = resolve_runtime_stack()
-        stack_name = cls.runtime_stack.stack_name
-        cls.CONTAINER_NAME = (
-            "vllm-sr-container"
-            if stack_name == DEFAULT_STACK_NAME
-            else f"{stack_name}-vllm-sr-container"
-        )
         cls.ROUTER_CONTAINER_NAME = cls.runtime_stack.router_container_name
         cls.ENVOY_CONTAINER_NAME = cls.runtime_stack.envoy_container_name
         cls.DASHBOARD_CONTAINER_NAME = cls.runtime_stack.dashboard_container_name
         cls.SIM_CONTAINER_NAME = cls.runtime_stack.fleet_sim_container_name
+        cls.PROBE_CONTAINER_NAME = (
+            f"{cls.runtime_stack.stack_name}-vllm-sr-cli-test-probe"
+        )
         cls.REDIS_CONTAINER_NAME = cls.runtime_stack.redis_container_name
         cls.POSTGRES_CONTAINER_NAME = cls.runtime_stack.postgres_container_name
         cls.MILVUS_CONTAINER_NAME = cls.runtime_stack.milvus_container_name
@@ -205,7 +204,6 @@ class CLITestBase(unittest.TestCase):
         """Stop and remove any existing vllm-sr container."""
         runtime = cls.container_runtime
         managed_container_names = (
-            cls.CONTAINER_NAME,
             cls.ROUTER_CONTAINER_NAME,
             cls.ENVOY_CONTAINER_NAME,
             cls.DASHBOARD_CONTAINER_NAME,
@@ -214,12 +212,49 @@ class CLITestBase(unittest.TestCase):
             *cls.AUXILIARY_CONTAINER_NAMES,
         )
         for container_name in managed_container_names:
+            if not cls._owned_by_active_stack(container_name):
+                continue
             for command in (
                 [runtime, "stop", container_name],
                 [runtime, "rm", "-f", container_name],
             ):
                 with suppress(Exception):
                     cls._run_subprocess(command, timeout=30)
+
+    @classmethod
+    def _owned_by_active_stack(cls, container_name: str) -> bool:
+        """Only clean containers attested to this test's stack identity."""
+        try:
+            result = cls._run_subprocess(
+                [
+                    cls.container_runtime,
+                    "inspect",
+                    "--format",
+                    "{{json .Config.Labels}}",
+                    container_name,
+                ],
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return False
+            labels = yaml.safe_load(result.stdout) or {}
+            return (
+                labels.get("com.vllm.semantic-router.managed") == "true"
+                and labels.get("com.vllm.semantic-router.stack")
+                == cls.runtime_stack.stack_name
+            )
+        except Exception:
+            return False
+
+    @classmethod
+    def _remove_owned_container(cls, container_name: str) -> None:
+        """Remove a disposable fixture only after verifying its stack label."""
+        if not cls._owned_by_active_stack(container_name):
+            return
+        with suppress(Exception):
+            cls._run_subprocess(
+                [cls.container_runtime, "rm", "-f", container_name], timeout=30
+            )
 
     def _explicit_container_status(self, container_name: str) -> str:
         """Get the status of one managed container."""
@@ -557,11 +592,7 @@ class CLITestBase(unittest.TestCase):
         vantage point from which "can this workload reach that store" has an
         answer: the host reaches a published port either way.
         """
-        with suppress(Exception):
-            self._run_subprocess(
-                [self.container_runtime, "rm", "-f", self.PROBE_CONTAINER_NAME],
-                timeout=30,
-            )
+        self._remove_owned_container(self.PROBE_CONTAINER_NAME)
         return self._run_subprocess(
             [
                 self.container_runtime,
@@ -569,6 +600,10 @@ class CLITestBase(unittest.TestCase):
                 "--rm",
                 "--name",
                 self.PROBE_CONTAINER_NAME,
+                "--label",
+                "com.vllm.semantic-router.managed=true",
+                "--label",
+                f"com.vllm.semantic-router.stack={self.runtime_stack.stack_name}",
                 "--network",
                 network_name,
                 image,

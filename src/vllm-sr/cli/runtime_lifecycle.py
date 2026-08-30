@@ -18,6 +18,7 @@ from cli.container_cli import (
     container_logs,
     container_logs_since,
     container_network_connect,
+    container_ownership,
     container_remove_container,
     container_start_container,
     container_start_fleet_sim,
@@ -28,7 +29,7 @@ from cli.container_cli import (
     container_stop_container,
     load_openclaw_registry,
 )
-from cli.runtime_stack import RuntimeStackLayout
+from cli.runtime_stack import RuntimeStackLayout, resolve_runtime_stack
 from cli.terminal import echo, fields, heading, progress, success
 from cli.utils import get_logger
 
@@ -54,33 +55,53 @@ def log_startup_banner(
         log.info(f"  - {name}: {address}:{port}")
 
 
-def ensure_clean_runtime_container(container_name: str) -> None:
+def ensure_clean_runtime_container(
+    container_name: str, stack_name: str | None = None
+) -> None:
     """Stop and remove any existing runtime container before restarting."""
     status = container_status(container_name)
     if status == "not found":
         return
+    ownership = container_ownership(
+        container_name, stack_name or resolve_runtime_stack().stack_name
+    )
+    if ownership != "owned":
+        raise RuntimeError(
+            f"refusing to replace {container_name}: ownership is {ownership}"
+        )
     log.info(f"Existing container found (status: {status}), cleaning up...")
     if status in {"running", "paused"}:
         container_stop_container(container_name)
     container_remove_container(container_name)
 
 
-def ensure_shared_network(shared_network_name: str) -> None:
+def ensure_shared_network(
+    shared_network_name: str, stack_layout: RuntimeStackLayout | None = None
+) -> None:
     """Create the shared OpenClaw bridge network used by local stacks."""
-    _ensure_network(shared_network_name, "shared OpenClaw")
+    _ensure_network(shared_network_name, "shared OpenClaw", stack_layout)
 
 
-def ensure_data_network(data_network_name: str) -> None:
+def ensure_data_network(
+    data_network_name: str, stack_layout: RuntimeStackLayout | None = None
+) -> None:
     """Create the bridge network reserved for this stack's storage services.
 
     It exists so that joining the application network is not enough to reach
     Redis, Postgres, or Milvus. Only those three and Router are attached to it.
     """
-    _ensure_network(data_network_name, "storage data")
+    _ensure_network(data_network_name, "storage data", stack_layout)
 
 
-def _ensure_network(network_name: str, description: str) -> None:
-    return_code, _stdout, stderr = container_create_network(network_name)
+def _ensure_network(
+    network_name: str,
+    description: str,
+    stack_layout: RuntimeStackLayout | None = None,
+) -> None:
+    stack_layout = stack_layout or resolve_runtime_stack()
+    return_code, _stdout, stderr = container_create_network(
+        network_name, labels=stack_layout.ownership_labels
+    )
     if return_code != 0:
         log.error(f"Failed to create {description} network: {stderr}")
         raise SystemExit(1)
