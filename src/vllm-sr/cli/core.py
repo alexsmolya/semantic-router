@@ -547,11 +547,7 @@ def _stop_managed_container(
 ) -> bool:
     if container_status == "not found":
         return True
-    ownership = (
-        container_ownership(container_name, stack_name)
-        if run_id is None
-        else container_ownership(container_name, stack_name, run_id)
-    )
+    ownership = container_ownership(container_name, stack_name, run_id)
     if ownership != "owned":
         log.error(f"Refusing to mutate {container_name}: ownership is {ownership}")
         return False
@@ -597,11 +593,7 @@ def _storage_container_names(stack_layout: RuntimeStackLayout) -> tuple[str, ...
 def _remove_runtime_network(
     network_name: str, stack_name: str, run_id: str | None = None
 ) -> bool:
-    ownership = (
-        network_ownership(network_name, stack_name)
-        if run_id is None
-        else network_ownership(network_name, stack_name, run_id)
-    )
+    ownership = network_ownership(network_name, stack_name, run_id)
     if ownership == "not found":
         return True
     if ownership != "owned":
@@ -730,11 +722,7 @@ def _ensure_runtime_container_available(
     expected_stack = stack_name or layout.stack_name
     expected_run = layout.run_id if run_id is None else run_id
     if container_status(container_name) != "not found":
-        ownership = (
-            container_ownership(container_name, expected_stack)
-            if expected_run is None
-            else container_ownership(container_name, expected_stack, expected_run)
-        )
+        ownership = container_ownership(container_name, expected_stack, expected_run)
         if ownership == "owned":
             return
         log.error(

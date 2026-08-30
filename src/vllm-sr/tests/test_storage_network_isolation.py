@@ -477,7 +477,7 @@ def test_stopping_one_stack_does_not_mutate_another_stack(monkeypatch):
     monkeypatch.setattr(
         core,
         "container_ownership",
-        lambda name, stack_name: (
+        lambda name, stack_name, *_args: (
             "owned"
             if stack_name == stack_a.stack_name and name in _all_managed_names(stack_a)
             else "unowned"
@@ -491,7 +491,7 @@ def test_stopping_one_stack_does_not_mutate_another_stack(monkeypatch):
     monkeypatch.setattr(
         core,
         "network_ownership",
-        lambda name, stack_name: (
+        lambda name, stack_name, *_args: (
             "owned"
             if stack_name == stack_a.stack_name
             and name in {stack_a.network_name, stack_a.data_network_name}

@@ -583,11 +583,7 @@ def _reuse_running_storage_container(
     """
     status = container_status(container_name)
     if status == "running":
-        ownership = (
-            container_ownership(container_name, stack_name)
-            if run_id is None
-            else container_ownership(container_name, stack_name, run_id)
-        )
+        ownership = container_ownership(container_name, stack_name, run_id)
         if ownership != "owned":
             return (
                 1,
@@ -768,12 +764,8 @@ def _replace_existing_container(
     if status == "not found":
         return None
     stack_layout = stack_layout or resolve_runtime_stack()
-    ownership = (
-        container_ownership(container_name, stack_layout.stack_name)
-        if stack_layout.run_id is None
-        else container_ownership(
-            container_name, stack_layout.stack_name, stack_layout.run_id
-        )
+    ownership = container_ownership(
+        container_name, stack_layout.stack_name, stack_layout.run_id
     )
     if ownership != "owned":
         raise RuntimeError(

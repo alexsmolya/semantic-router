@@ -67,11 +67,7 @@ def ensure_clean_runtime_container(
     layout = resolve_runtime_stack()
     expected_stack = stack_name or layout.stack_name
     expected_run = run_id if run_id is not None else layout.run_id
-    ownership = (
-        container_ownership(container_name, expected_stack)
-        if expected_run is None
-        else container_ownership(container_name, expected_stack, expected_run)
-    )
+    ownership = container_ownership(container_name, expected_stack, expected_run)
     if ownership != "owned":
         raise RuntimeError(
             f"refusing to replace {container_name}: ownership is {ownership}"

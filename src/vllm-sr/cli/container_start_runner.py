@@ -135,11 +135,7 @@ def _cleanup_started_containers(
         status = container_status(container_name)
         if status == "not found":
             continue
-        ownership = (
-            container_ownership(container_name, stack_name)
-            if run_id is None
-            else container_ownership(container_name, stack_name, run_id)
-        )
+        ownership = container_ownership(container_name, stack_name, run_id)
         if not stack_name or ownership != "owned":
             log.error(
                 f"Refusing to roll back {container_name}: ownership is not established"
