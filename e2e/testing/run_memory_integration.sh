@@ -11,7 +11,8 @@ DOCKER_TAG="${DOCKER_TAG:-latest}"
 VLLM_SR_IMAGE="${VLLM_SR_IMAGE:-ghcr.io/vllm-project/semantic-router/vllm-sr:latest}"
 VLLM_SR_STACK_NAME="${VLLM_SR_STACK_NAME:-vllm-sr-memory-$$}"
 VLLM_SR_PORT_OFFSET="${VLLM_SR_PORT_OFFSET:-0}"
-export VLLM_SR_STACK_NAME VLLM_SR_PORT_OFFSET
+VLLM_SR_RUN_ID="${VLLM_SR_RUN_ID:-memory-$$}"
+export VLLM_SR_STACK_NAME VLLM_SR_PORT_OFFSET VLLM_SR_RUN_ID
 if [[ "${VLLM_SR_STACK_NAME}" == "vllm-sr" ]]; then
     VLLM_SR_NETWORK="${VLLM_SR_NETWORK:-vllm-sr-network}"
     VLLM_SR_ROUTER_CONTAINER_NAME="vllm-sr-router-container"
@@ -95,13 +96,13 @@ cleanup() {
 
     vllm-sr stop >/dev/null 2>&1 || true
     labels="$(${CONTAINER_RUNTIME} inspect --format '{{json .Config.Labels}}' "${LLM_KATAN_CONTAINER_NAME}" 2>/dev/null || true)"
-    if [[ "${labels}" == *'"com.vllm.semantic-router.managed":"true"'* && "${labels}" == *"\"com.vllm.semantic-router.stack\":\"${VLLM_SR_STACK_NAME}\""* ]]; then
+    if [[ "${labels}" == *'"com.vllm.semantic-router.managed":"true"'* && "${labels}" == *"\"com.vllm.semantic-router.stack\":\"${VLLM_SR_STACK_NAME}\""* && "${labels}" == *"\"com.vllm.semantic-router.run\":\"${VLLM_SR_RUN_ID}\""* ]]; then
         "${CONTAINER_RUNTIME}" stop "${LLM_KATAN_CONTAINER_NAME}" >/dev/null 2>&1 || true
         "${CONTAINER_RUNTIME}" rm "${LLM_KATAN_CONTAINER_NAME}" >/dev/null 2>&1 || true
     else
         echo "Refusing to remove ${LLM_KATAN_CONTAINER_NAME}: ownership labels do not match" >&2
     fi
-    make -C "${REPO_ROOT}" stop-milvus MILVUS_CONTAINER_NAME="${MILVUS_CONTAINER_NAME}" MILVUS_DATA_DIR="${TEST_DIR}/milvus-data" MILVUS_STACK_NAME="${VLLM_SR_STACK_NAME}" >/dev/null 2>&1 || true
+    make -C "${REPO_ROOT}" stop-milvus MILVUS_CONTAINER_NAME="${MILVUS_CONTAINER_NAME}" MILVUS_DATA_DIR="${TEST_DIR}/milvus-data" MILVUS_STACK_NAME="${VLLM_SR_STACK_NAME}" MILVUS_RUN_ID="${VLLM_SR_RUN_ID}" >/dev/null 2>&1 || true
 
     if [[ "${KEEP_TEST_DIR}" == "1" ]]; then
         echo "Preserving memory integration artifacts at ${TEST_DIR}"
@@ -229,7 +230,8 @@ make -C "${REPO_ROOT}" start-milvus \
     MILVUS_PORT="${MILVUS_PORT}" \
     MILVUS_HEALTH_PORT="${MILVUS_HEALTH_PORT}" \
     MILVUS_DATA_DIR="${TEST_DIR}/milvus-data" \
-    MILVUS_STACK_NAME="${VLLM_SR_STACK_NAME}"
+    MILVUS_STACK_NAME="${VLLM_SR_STACK_NAME}" \
+    MILVUS_RUN_ID="${VLLM_SR_RUN_ID}"
 
 # Double-check Milvus readiness with pymilvus probe (gRPC-level, not just HTTP)
 echo "Verifying Milvus gRPC readiness via pymilvus..."
@@ -260,10 +262,11 @@ if ! "${CONTAINER_RUNTIME}" network inspect "${VLLM_SR_NETWORK}" >/dev/null 2>&1
     "${CONTAINER_RUNTIME}" network create \
         --label com.vllm.semantic-router.managed=true \
         --label com.vllm.semantic-router.stack="${VLLM_SR_STACK_NAME}" \
+        --label com.vllm.semantic-router.run="${VLLM_SR_RUN_ID}" \
         "${VLLM_SR_NETWORK}" >/dev/null
 else
     network_labels="$(${CONTAINER_RUNTIME} network inspect --format '{{json .Labels}}' "${VLLM_SR_NETWORK}" 2>/dev/null || true)"
-    if [[ "${network_labels}" != *'"com.vllm.semantic-router.managed":"true"'* || "${network_labels}" != *"\"com.vllm.semantic-router.stack\":\"${VLLM_SR_STACK_NAME}\""* ]]; then
+    if [[ "${network_labels}" != *'"com.vllm.semantic-router.managed":"true"'* || "${network_labels}" != *"\"com.vllm.semantic-router.stack\":\"${VLLM_SR_STACK_NAME}\""* || "${network_labels}" != *"\"com.vllm.semantic-router.run\":\"${VLLM_SR_RUN_ID}\""* ]]; then
         echo "Refusing to use ${VLLM_SR_NETWORK}: ownership labels do not match" >&2
         exit 1
     fi
@@ -277,6 +280,7 @@ echo "Milvus connected to ${VLLM_SR_NETWORK} as ${MILVUS_CONTAINER_NAME}"
 "${CONTAINER_RUNTIME}" run -d --name "${LLM_KATAN_CONTAINER_NAME}" \
     --label com.vllm.semantic-router.managed=true \
     --label com.vllm.semantic-router.stack="${VLLM_SR_STACK_NAME}" \
+    --label com.vllm.semantic-router.run="${VLLM_SR_RUN_ID}" \
     --network "${VLLM_SR_NETWORK}" \
     --network-alias "${LLM_KATAN_CONTAINER_NAME}" \
     -p "127.0.0.1:${LLM_KATAN_PORT}:8000" \

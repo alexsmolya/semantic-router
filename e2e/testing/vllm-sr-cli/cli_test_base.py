@@ -21,6 +21,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import yaml
+from cli.container_ownership import labels_match_ownership
 from cli.runtime_stack import resolve_runtime_stack
 
 HTTP_STATUS_OK = 200
@@ -88,6 +89,13 @@ class CLITestBase(unittest.TestCase):
 
     # Health check timeout (for serve command)
     HEALTH_CHECK_TIMEOUT = 300
+
+    @classmethod
+    def _ownership_label_args(cls) -> list[str]:
+        args: list[str] = []
+        for key, value in cls.runtime_stack.ownership_labels:
+            args.extend(["--label", f"{key}={value}"])
+        return args
 
     @classmethod
     def setUpClass(cls):
@@ -238,10 +246,10 @@ class CLITestBase(unittest.TestCase):
             if result.returncode != 0:
                 return False
             labels = yaml.safe_load(result.stdout) or {}
-            return (
-                labels.get("com.vllm.semantic-router.managed") == "true"
-                and labels.get("com.vllm.semantic-router.stack")
-                == cls.runtime_stack.stack_name
+            return labels_match_ownership(
+                labels,
+                cls.runtime_stack.stack_name,
+                cls.runtime_stack.run_id,
             )
         except Exception:
             return False
@@ -600,10 +608,7 @@ class CLITestBase(unittest.TestCase):
                 "--rm",
                 "--name",
                 self.PROBE_CONTAINER_NAME,
-                "--label",
-                "com.vllm.semantic-router.managed=true",
-                "--label",
-                f"com.vllm.semantic-router.stack={self.runtime_stack.stack_name}",
+                *self._ownership_label_args(),
                 "--network",
                 network_name,
                 image,

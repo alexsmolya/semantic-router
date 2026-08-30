@@ -27,7 +27,10 @@ make vllm-sr-test-integration VLLM_SR_STACK_NAME=cli-lane-a VLLM_SR_PORT_OFFSET=
 ```
 
 The memory integration target accepts the same variables. Do not point an
-isolated run at a name or port range already used by another stack.
+isolated run at a name or port range already used by another stack. The Make
+target creates a unique `VLLM_SR_RUN_ID` by default; set it explicitly when
+resuming or stopping a run. Cleanup requires the exact stack/run pair and
+preserves same-name resources from an older generation.
 
 ## What the suite covers
 

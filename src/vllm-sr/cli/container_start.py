@@ -47,7 +47,12 @@ from cli.container_start_paths import (
 )
 from cli.container_start_runner import run_container_specs
 from cli.parser import parse_user_config
-from cli.runtime_stack import PORT_OFFSET_ENV, RuntimeStackLayout, resolve_runtime_stack
+from cli.runtime_stack import (
+    PORT_OFFSET_ENV,
+    RUN_ID_ENV,
+    RuntimeStackLayout,
+    resolve_runtime_stack,
+)
 from cli.runtime_topology import resolve_runtime_topology
 from cli.storage_secrets import (
     STORAGE_SECRET_ENV_NAMES,
@@ -166,6 +171,8 @@ def _build_common_runtime_env(
     common_env["VLLM_SR_STATE_ROOT_DIR"] = "/app"
     common_env["VLLM_SR_CONFIG_BASE_DIR"] = "/app"
     common_env[PORT_OFFSET_ENV] = str(stack_layout.port_offset)
+    if stack_layout.run_id is not None:
+        common_env[RUN_ID_ENV] = stack_layout.run_id
     if recipe_store_dir:
         common_env["VLLM_SR_RECIPE_STORE_DIR"] = recipe_store_dir
     stack_name_value = os.getenv("VLLM_SR_STACK_NAME", "").strip()

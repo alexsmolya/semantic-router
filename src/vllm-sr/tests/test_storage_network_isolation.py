@@ -624,3 +624,30 @@ def test_a_failure_after_creation_unwinds_the_container_it_created(monkeypatch):
     # The create ran, the connect failed, and the start never happened.
     assert [cmd[1] for cmd in calls] == ["create", "network"]
     assert removed == ["vllm-sr-router-container"]
+
+
+def test_repeated_rollback_is_idempotent_after_owned_creation(monkeypatch):
+    statuses = iter(["created", "not found"])
+    removed = []
+
+    monkeypatch.setattr(
+        container_start_runner, "container_status", lambda _name: next(statuses)
+    )
+    monkeypatch.setattr(
+        container_start_runner, "container_ownership", lambda *_args: "owned"
+    )
+    monkeypatch.setattr(
+        container_start_runner, "container_stop_container", lambda _name: True
+    )
+    monkeypatch.setattr(
+        container_start_runner, "container_remove_container", removed.append
+    )
+
+    container_start_runner._cleanup_started_containers(
+        [("lane-a-router", "lane-a", "run-1")]
+    )
+    container_start_runner._cleanup_started_containers(
+        [("lane-a-router", "lane-a", "run-1")]
+    )
+
+    assert removed == ["lane-a-router"]

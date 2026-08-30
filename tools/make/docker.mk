@@ -25,6 +25,7 @@ DOCKER_TAG ?= latest
 # hosts; the defaults preserve the normal local stack.
 VLLM_SR_STACK_NAME ?= vllm-sr
 VLLM_SR_PORT_OFFSET ?= 0
+VLLM_SR_RUN_ID ?= cli-$(shell date +%s%N)
 
 # Build all Docker images
 # Note: extproc-rocm is excluded because it requires x86_64 + ROCm hardware.
@@ -523,7 +524,7 @@ vllm-sr-test: vllm-sr-install-cli
 vllm-sr-test-integration: ## Run CLI unit + integration tests (requires local router + simulator images)
 vllm-sr-test-integration: vllm-sr-build vllm-sr-envoy-build vllm-sr-dashboard-build vllm-sr-sim-build vllm-sr-install-cli
 	@$(LOG_TARGET)
-	@cd e2e/testing/vllm-sr-cli && PATH="$(AGENT_VENV)/bin:$$PATH" CONTAINER_RUNTIME=$(CONTAINER_RUNTIME) VLLM_SR_STACK_NAME="$(VLLM_SR_STACK_NAME)" VLLM_SR_PORT_OFFSET="$(VLLM_SR_PORT_OFFSET)" VLLM_SR_IMAGE=$(VLLM_SR_IMAGE) VLLM_SR_ROUTER_IMAGE=$(VLLM_SR_ROUTER_IMAGE) VLLM_SR_ENVOY_IMAGE=$(VLLM_SR_ENVOY_IMAGE) VLLM_SR_DASHBOARD_IMAGE=$(VLLM_SR_DASHBOARD_IMAGE) VLLM_SR_SIM_IMAGE=$(VLLM_SR_SIM_IMAGE) RUN_INTEGRATION_TESTS=true "$(AGENT_PYTHON)" run_cli_tests.py --verbose --integration
+	@cd e2e/testing/vllm-sr-cli && PATH="$(AGENT_VENV)/bin:$$PATH" CONTAINER_RUNTIME=$(CONTAINER_RUNTIME) VLLM_SR_STACK_NAME="$(VLLM_SR_STACK_NAME)" VLLM_SR_PORT_OFFSET="$(VLLM_SR_PORT_OFFSET)" VLLM_SR_RUN_ID="$(VLLM_SR_RUN_ID)" VLLM_SR_IMAGE=$(VLLM_SR_IMAGE) VLLM_SR_ROUTER_IMAGE=$(VLLM_SR_ROUTER_IMAGE) VLLM_SR_ENVOY_IMAGE=$(VLLM_SR_ENVOY_IMAGE) VLLM_SR_DASHBOARD_IMAGE=$(VLLM_SR_DASHBOARD_IMAGE) VLLM_SR_SIM_IMAGE=$(VLLM_SR_SIM_IMAGE) RUN_INTEGRATION_TESTS=true "$(AGENT_PYTHON)" run_cli_tests.py --verbose --integration
 
 memory-test-integration: ## Run memory integration tests with local Milvus, llm-katan, and vllm-sr serve
 memory-test-integration: vllm-sr-build vllm-sr-envoy-build vllm-sr-dashboard-build vllm-sr-sim-build vllm-sr-install-cli docker-build-llm-katan
@@ -538,5 +539,6 @@ memory-test-integration: vllm-sr-build vllm-sr-envoy-build vllm-sr-dashboard-bui
 	VLLM_SR_SIM_IMAGE=$(VLLM_SR_SIM_IMAGE) \
 	VLLM_SR_STACK_NAME="$(VLLM_SR_STACK_NAME)" \
 	VLLM_SR_PORT_OFFSET="$(VLLM_SR_PORT_OFFSET)" \
+	VLLM_SR_RUN_ID="$(VLLM_SR_RUN_ID)" \
 	PATH="$(AGENT_VENV)/bin:$$PATH" \
 	bash e2e/testing/run_memory_integration.sh

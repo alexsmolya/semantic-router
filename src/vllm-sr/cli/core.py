@@ -401,6 +401,7 @@ def stop_vllm_sr():
             container_name,
             container_statuses[container_name],
             stack_name=stack_layout.stack_name,
+            run_id=stack_layout.run_id,
             stop_message=f"Stopping {container_name}...",
             stopped_message=f"{container_name} stopped",
         ):
@@ -409,6 +410,7 @@ def stop_vllm_sr():
         stack_layout.fleet_sim_container_name,
         container_statuses[stack_layout.fleet_sim_container_name],
         stack_name=stack_layout.stack_name,
+        run_id=stack_layout.run_id,
         stop_message=f"Stopping {stack_layout.fleet_sim_container_name}...",
         stopped_message=f"{stack_layout.fleet_sim_container_name} stopped",
     ):
@@ -418,6 +420,7 @@ def stop_vllm_sr():
             container_name,
             container_statuses[container_name],
             stack_name=stack_layout.stack_name,
+            run_id=stack_layout.run_id,
             stop_message=f"Stopping {container_name}...",
             stopped_message=f"{container_name} stopped",
         ):
@@ -433,6 +436,7 @@ def stop_vllm_sr():
             container_name,
             container_statuses[container_name],
             stack_name=stack_layout.stack_name,
+            run_id=stack_layout.run_id,
             stop_message=f"Stopping {container_name}...",
             stopped_message=f"{container_name} stopped",
             preserve_unadopted_data=container_name in credentialed_storage,
@@ -440,7 +444,9 @@ def stop_vllm_sr():
         ):
             failures.append(container_name)
     for stack_network_name in stack_network_names:
-        if not _remove_runtime_network(stack_network_name, stack_layout.stack_name):
+        if not _remove_runtime_network(
+            stack_network_name, stack_layout.stack_name, stack_layout.run_id
+        ):
             failures.append(stack_network_name)
     if failures:
         raise RuntimeError("Failed to stop managed containers: " + ", ".join(failures))
@@ -537,10 +543,15 @@ def _stop_managed_container(
     preserve_unadopted_data: bool = False,
     network_names: tuple[str, ...] = (),
     stack_name: str,
+    run_id: str | None = None,
 ) -> bool:
     if container_status == "not found":
         return True
-    ownership = container_ownership(container_name, stack_name)
+    ownership = (
+        container_ownership(container_name, stack_name)
+        if run_id is None
+        else container_ownership(container_name, stack_name, run_id)
+    )
     if ownership != "owned":
         log.error(f"Refusing to mutate {container_name}: ownership is {ownership}")
         return False
@@ -583,8 +594,14 @@ def _storage_container_names(stack_layout: RuntimeStackLayout) -> tuple[str, ...
     return stack_layout.storage_container_names
 
 
-def _remove_runtime_network(network_name: str, stack_name: str) -> bool:
-    ownership = network_ownership(network_name, stack_name)
+def _remove_runtime_network(
+    network_name: str, stack_name: str, run_id: str | None = None
+) -> bool:
+    ownership = (
+        network_ownership(network_name, stack_name)
+        if run_id is None
+        else network_ownership(network_name, stack_name, run_id)
+    )
     if ownership == "not found":
         return True
     if ownership != "owned":
@@ -615,7 +632,7 @@ def show_logs(service: str, follow: bool = False):
         if service == "simulator"
         else runtime_service_container_name(service, stack_layout)
     )
-    _ensure_runtime_container_available(container_name, stack_layout.stack_name)
+    _ensure_runtime_container_available(container_name)
 
     if follow:
         log.info(f"Following {service} logs (Ctrl+C to stop)...")
@@ -704,9 +721,20 @@ def _requested_services(service: str) -> list[str]:
     return [service]
 
 
-def _ensure_runtime_container_available(container_name: str, stack_name: str) -> None:
+def _ensure_runtime_container_available(
+    container_name: str,
+    stack_name: str | None = None,
+    run_id: str | None = None,
+) -> None:
+    layout = resolve_runtime_stack()
+    expected_stack = stack_name or layout.stack_name
+    expected_run = layout.run_id if run_id is None else run_id
     if container_status(container_name) != "not found":
-        ownership = container_ownership(container_name, stack_name)
+        ownership = (
+            container_ownership(container_name, expected_stack)
+            if expected_run is None
+            else container_ownership(container_name, expected_stack, expected_run)
+        )
         if ownership == "owned":
             return
         log.error(

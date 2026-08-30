@@ -15,6 +15,13 @@ runtime_service_status = importlib.import_module("cli.runtime_service_status")
 storage_backends = importlib.import_module("cli.storage_backends")
 
 
+@pytest.fixture(autouse=True)
+def _attest_mocked_runtime_resources(monkeypatch):
+    """Keep lifecycle tests hermetic now that destructive paths attest labels."""
+    monkeypatch.setattr(core, "container_ownership", lambda *_args: "owned")
+    monkeypatch.setattr(core, "network_ownership", lambda *_args: "owned")
+
+
 def test_check_envoy_status_uses_ready_probe_when_available(monkeypatch):
     stack_layout = runtime_stack.resolve_runtime_stack()
     captured = []
@@ -476,6 +483,11 @@ def _stop_environment(monkeypatch, stack_layout, statuses, stopped, removed):
     monkeypatch.setattr(core, "container_remove_network", lambda _name: (0, "", ""))
     monkeypatch.setattr(
         core,
+        "container_network_disconnect_if_attached",
+        lambda _network, _name: (0, "", ""),
+    )
+    monkeypatch.setattr(
+        storage_backends,
         "container_network_disconnect_if_attached",
         lambda _network, _name: (0, "", ""),
     )

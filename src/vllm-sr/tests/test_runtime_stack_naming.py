@@ -240,6 +240,23 @@ def test_resolve_runtime_stack_supports_default_role_container_names():
     )
 
 
+def test_resolve_runtime_stack_carries_explicit_run_generation_into_ownership_labels():
+    stack_layout = resolve_runtime_stack(stack_name="lane-a", run_id="run-17")
+
+    assert stack_layout.run_id == "run-17"
+    assert ("com.vllm.semantic-router.run", "run-17") in stack_layout.ownership_labels
+
+
+def test_stack_only_layout_does_not_attest_an_explicit_run():
+    stack_layout = resolve_runtime_stack(stack_name="lane-a")
+
+    assert stack_layout.run_id is None
+    assert all(
+        key != "com.vllm.semantic-router.run"
+        for key, _ in stack_layout.ownership_labels
+    )
+
+
 def test_container_start_vllm_sr_applies_custom_stack_name_and_port_offset(
     tmp_path, monkeypatch
 ):

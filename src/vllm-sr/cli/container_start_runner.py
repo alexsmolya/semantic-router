@@ -32,7 +32,7 @@ def run_container_specs(container_specs, *, storage_secret_values: dict[str, str
     the unwind stop and remove somebody else's container.
     """
 
-    started_containers: list[tuple[str, str | None]] = []
+    started_containers: list[tuple[str, str | None, str | None]] = []
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
 
@@ -43,7 +43,13 @@ def run_container_specs(container_specs, *, storage_secret_values: dict[str, str
             service_name,
             storage_secret_values,
             on_created=lambda name=container_name, command=commands[0]: (
-                started_containers.append((name, _stack_name_from_command(command)))
+                started_containers.append(
+                    (
+                        name,
+                        _label_from_command(command, "com.vllm.semantic-router.stack="),
+                        _label_from_command(command, "com.vllm.semantic-router.run="),
+                    )
+                )
             ),
         )
         if stdout:
@@ -115,8 +121,7 @@ def _service_child_env(
     return {**os.environ, **storage_secret_values}
 
 
-def _stack_name_from_command(command: list[str]) -> str | None:
-    prefix = "com.vllm.semantic-router.stack="
+def _label_from_command(command: list[str], prefix: str) -> str | None:
     for argument in command:
         if argument.startswith(prefix):
             return argument.removeprefix(prefix)
@@ -124,13 +129,18 @@ def _stack_name_from_command(command: list[str]) -> str | None:
 
 
 def _cleanup_started_containers(
-    container_names: list[tuple[str, str | None]],
+    container_names: list[tuple[str, str | None, str | None]],
 ) -> None:
-    for container_name, stack_name in reversed(container_names):
+    for container_name, stack_name, run_id in reversed(container_names):
         status = container_status(container_name)
         if status == "not found":
             continue
-        if not stack_name or container_ownership(container_name, stack_name) != "owned":
+        ownership = (
+            container_ownership(container_name, stack_name)
+            if run_id is None
+            else container_ownership(container_name, stack_name, run_id)
+        )
+        if not stack_name or ownership != "owned":
             log.error(
                 f"Refusing to roll back {container_name}: ownership is not established"
             )

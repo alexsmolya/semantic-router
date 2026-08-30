@@ -190,10 +190,7 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
         It carries no `requirepass`, so its `PONG` also shows that the blocked
         probes above stopped at the connection rather than at authentication.
         """
-        self._run_subprocess(
-            [self.container_runtime, "rm", "-f", self.CONTROL_CONTAINER_NAME],
-            timeout=30,
-        )
+        self._remove_owned_container(self.CONTROL_CONTAINER_NAME)
         result = self._run_subprocess(
             [
                 self.container_runtime,
@@ -201,10 +198,7 @@ class TestStorageNetworkIsolation(ServeSessionMixin, CLITestBase):
                 "-d",
                 "--name",
                 self.CONTROL_CONTAINER_NAME,
-                "--label",
-                "com.vllm.semantic-router.managed=true",
-                "--label",
-                f"com.vllm.semantic-router.stack={self.runtime_stack.stack_name}",
+                *self._ownership_label_args(),
                 "--network",
                 self.NETWORK_NAME,
                 REDIS_PROBE_IMAGE,

@@ -56,14 +56,21 @@ def log_startup_banner(
 
 
 def ensure_clean_runtime_container(
-    container_name: str, stack_name: str | None = None
+    container_name: str,
+    stack_name: str | None = None,
+    run_id: str | None = None,
 ) -> None:
     """Stop and remove any existing runtime container before restarting."""
     status = container_status(container_name)
     if status == "not found":
         return
-    ownership = container_ownership(
-        container_name, stack_name or resolve_runtime_stack().stack_name
+    layout = resolve_runtime_stack()
+    expected_stack = stack_name or layout.stack_name
+    expected_run = run_id if run_id is not None else layout.run_id
+    ownership = (
+        container_ownership(container_name, expected_stack)
+        if expected_run is None
+        else container_ownership(container_name, expected_stack, expected_run)
     )
     if ownership != "owned":
         raise RuntimeError(

@@ -240,6 +240,7 @@ def container_start_redis(
             network_name,
             stack_layout.network_name,
             stack_layout.stack_name,
+            stack_layout.run_id,
         )
         if reuse_result is not None:
             return reuse_result
@@ -323,6 +324,7 @@ def container_start_postgres(
             network_name,
             stack_layout.network_name,
             stack_layout.stack_name,
+            stack_layout.run_id,
         )
         if reuse_result is not None:
             return reuse_result
@@ -405,6 +407,7 @@ def container_start_milvus(
             network_name,
             stack_layout.network_name,
             stack_layout.stack_name,
+            stack_layout.run_id,
         )
         if reuse_result is not None:
             return reuse_result
@@ -568,6 +571,7 @@ def _reuse_running_storage_container(
     data_network_name: str | None,
     app_network_name: str | None,
     stack_name: str,
+    run_id: str | None = None,
 ) -> tuple[int, str, str] | None:
     """Return a success/failure tuple when a running storage container is reused.
 
@@ -581,7 +585,11 @@ def _reuse_running_storage_container(
     """
     status = container_status(container_name)
     if status == "running":
-        ownership = container_ownership(container_name, stack_name)
+        ownership = (
+            container_ownership(container_name, stack_name)
+            if run_id is None
+            else container_ownership(container_name, stack_name, run_id)
+        )
         if ownership != "owned":
             return (
                 1,
@@ -762,7 +770,13 @@ def _replace_existing_container(
     if status == "not found":
         return None
     stack_layout = stack_layout or resolve_runtime_stack()
-    ownership = container_ownership(container_name, stack_layout.stack_name)
+    ownership = (
+        container_ownership(container_name, stack_layout.stack_name)
+        if stack_layout.run_id is None
+        else container_ownership(
+            container_name, stack_layout.stack_name, stack_layout.run_id
+        )
+    )
     if ownership != "owned":
         raise RuntimeError(
             f"refusing to replace {container_name}: ownership is {ownership}"

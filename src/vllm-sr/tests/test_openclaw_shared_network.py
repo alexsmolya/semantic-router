@@ -22,6 +22,11 @@ def _split_runtime_topology(monkeypatch):
         "_runtime_socket_is_group_safe",
         lambda _path: True,
     )
+    monkeypatch.setattr(core, "container_ownership", lambda *_args: "owned")
+    monkeypatch.setattr(core, "network_ownership", lambda *_args: "owned")
+    monkeypatch.setattr(
+        runtime_lifecycle, "container_ownership", lambda *_args: "owned"
+    )
 
 
 def _capture_run_commands(monkeypatch):

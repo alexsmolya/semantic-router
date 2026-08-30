@@ -9,7 +9,8 @@ MILVUS_PORT ?= 19530
 MILVUS_HEALTH_PORT ?= 9091
 MILVUS_DATA_DIR ?= /tmp/milvus-data
 MILVUS_STACK_NAME ?=
-MILVUS_LABEL_ARGS = $(if $(MILVUS_STACK_NAME),--label com.vllm.semantic-router.managed=true --label com.vllm.semantic-router.stack=$(MILVUS_STACK_NAME),)
+MILVUS_RUN_ID ?=
+MILVUS_LABEL_ARGS = $(if $(MILVUS_STACK_NAME),--label com.vllm.semantic-router.managed=true --label com.vllm.semantic-router.stack=$(MILVUS_STACK_NAME) $(if $(MILVUS_RUN_ID),--label com.vllm.semantic-router.run=$(MILVUS_RUN_ID),),)
 
 # Milvus container management
 start-milvus: ## Start Milvus container for testing
@@ -56,7 +57,7 @@ stop-milvus: ## Stop and remove Milvus container
 	@$(LOG_TARGET)
 	@if [ -n "$(MILVUS_STACK_NAME)" ]; then \
 		LABELS="$$($(CONTAINER_RUNTIME) inspect --format '{{json .Config.Labels}}' $(MILVUS_CONTAINER_NAME) 2>/dev/null || true)"; \
-		if ! echo "$$LABELS" | grep -Fq '"com.vllm.semantic-router.managed":"true"' || ! echo "$$LABELS" | grep -Fq '"com.vllm.semantic-router.stack":"$(MILVUS_STACK_NAME)"'; then \
+		if ! echo "$$LABELS" | grep -Fq '"com.vllm.semantic-router.managed":"true"' || ! echo "$$LABELS" | grep -Fq '"com.vllm.semantic-router.stack":"$(MILVUS_STACK_NAME)"' || { [ -n "$(MILVUS_RUN_ID)" ] && ! echo "$$LABELS" | grep -Fq '"com.vllm.semantic-router.run":"$(MILVUS_RUN_ID)"'; }; then \
 			echo "Refusing to remove $(MILVUS_CONTAINER_NAME): ownership labels do not match" >&2; \
 			exit 1; \
 		fi; \

@@ -28,8 +28,14 @@ def container_create_network(network_name, labels=()):
         }
         if network_name in existing_networks:
             if labels:
-                stack_name = dict(labels).get("com.vllm.semantic-router.stack", "")
-                ownership = network_ownership(network_name, stack_name)
+                expected = dict(labels)
+                stack_name = expected.get("com.vllm.semantic-router.stack", "")
+                run_id = expected.get("com.vllm.semantic-router.run")
+                ownership = (
+                    network_ownership(network_name, stack_name)
+                    if run_id is None
+                    else network_ownership(network_name, stack_name, run_id)
+                )
                 if ownership != "owned":
                     return (
                         1,

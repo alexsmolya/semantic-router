@@ -148,6 +148,41 @@ def test_container_create_network_refuses_an_existing_network_from_another_stack
     assert not any(command[1:3] == ["network", "create"] for command in calls)
 
 
+def test_container_create_network_refuses_an_existing_network_from_another_run(
+    monkeypatch,
+):
+    def fake_run(command, **_kwargs):
+        if command[1:3] == ["network", "ls"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="lane-a-vllm-sr-network\n", stderr=""
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"com.vllm.semantic-router.managed":"true",'
+            '"com.vllm.semantic-router.stack":"lane-a",'
+            '"com.vllm.semantic-router.run":"old-run"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(networks, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(ownership, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(networks.subprocess, "run", fake_run)
+    monkeypatch.setattr(ownership.subprocess, "run", fake_run)
+
+    result = networks.container_create_network(
+        "lane-a-vllm-sr-network",
+        labels=(
+            ("com.vllm.semantic-router.managed", "true"),
+            ("com.vllm.semantic-router.stack", "lane-a"),
+            ("com.vllm.semantic-router.run", "new-run"),
+        ),
+    )
+
+    assert result[0] != 0
+    assert "ownership is unowned" in result[2]
+
+
 def test_container_ownership_requires_both_labels(monkeypatch):
     responses = iter(
         [
@@ -171,6 +206,42 @@ def test_container_ownership_requires_both_labels(monkeypatch):
     assert container_services.container_ownership("resource-a", "lane-a") == "owned"
     assert container_services.container_ownership("resource-b", "lane-a") == "unowned"
     assert container_services.container_ownership("resource-c", "lane-a") == "unowned"
+
+
+def test_explicit_run_ownership_rejects_stale_or_legacy_same_name_resource(monkeypatch):
+    responses = iter(
+        [
+            '{"com.vllm.semantic-router.managed":"true",'
+            '"com.vllm.semantic-router.stack":"lane-a",'
+            '"com.vllm.semantic-router.run":"old-run"}',
+            '{"com.vllm.semantic-router.managed":"true",'
+            '"com.vllm.semantic-router.stack":"lane-a"}',
+            '{"com.vllm.semantic-router.managed":"true",'
+            '"com.vllm.semantic-router.stack":"lane-a",'
+            '"com.vllm.semantic-router.run":"new-run"}',
+        ]
+    )
+    monkeypatch.setattr(ownership, "get_container_runtime", lambda: "docker")
+    monkeypatch.setattr(
+        ownership.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=next(responses), stderr=""
+        ),
+    )
+
+    assert (
+        container_services.container_ownership("same-name", "lane-a", "new-run")
+        == "unowned"
+    )
+    assert (
+        container_services.container_ownership("legacy-name", "lane-a", "new-run")
+        == "unowned"
+    )
+    assert (
+        container_services.container_ownership("current-name", "lane-a", "new-run")
+        == "owned"
+    )
 
 
 def _storage_start_environment(monkeypatch, commands, *, status="not found"):

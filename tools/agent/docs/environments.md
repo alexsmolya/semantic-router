@@ -30,6 +30,9 @@ the shared-environment symlink without overwriting local files.
 - The same values are inherited by feature-selected `vllm-sr-test-integration`
   and `memory-test-integration` runs. For example:
   `make agent-feature-gate ENV=cpu AGENT_STACK_NAME=lane-a AGENT_PORT_OFFSET=200`.
+- Integration entry points also carry a per-run `VLLM_SR_RUN_ID`; an explicit
+  run must use the same stack/run pair for later cleanup. A mismatched or
+  missing run label is preserved rather than adopted.
 
 ## `amd-local`
 

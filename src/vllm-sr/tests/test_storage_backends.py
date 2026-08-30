@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from cli import container_services
 from cli.bootstrap import build_bootstrap_config
 from cli.container_services import (
@@ -9,6 +10,15 @@ from cli.container_services import (
 )
 from cli.runtime_stack import resolve_runtime_stack
 from cli.storage_backends import detect_required_backends, start_storage_backends
+
+
+@pytest.fixture(autouse=True)
+def _attest_mocked_storage_container(monkeypatch):
+    """Storage command tests mock runtime inspection, including ownership."""
+    monkeypatch.setattr(
+        container_services, "container_ownership", lambda *_args: "owned"
+    )
+
 
 # `redis_conf_file` has no default: there is no way to start this stack's Redis
 # without a credential file. The reuse checks below answer before the argv is
